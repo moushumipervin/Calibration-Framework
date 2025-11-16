@@ -1389,6 +1389,85 @@ estimate_theta_EM_kfold_CVXR_ET_2 <- function(theta1,theta0,fold_T1,fold_T0,K, D
 
 
 
+library(ebal)
+
+EB_ATE <- function(Y, D, X){
+  
+  # Treated and Control groups
+  X1 <- as.matrix(X[D == 1, , drop = FALSE])
+  X0 <- as.matrix(X[D == 0, , drop = FALSE])
+  Y1 <- Y[D == 1]
+  Y0 <- Y[D == 0]
+  
+  # 1. Compute target moments of treated group
+  target <- colMeans(X1)
+  
+  # 2. Entropy balancing on controls ONLY
+  eb <- ebalance(Treatment = rep(1, nrow(X1)), X = X0, base.weight = NULL)
+  
+  w0 <- eb$w      # weights for control group
+  
+  # 3. ATE = E[Y(1)] - E[Y(0)]
+  EY1 <- mean(Y1)                    # unweighted treated mean
+  EY0 <- sum(w0 * Y0) / sum(w0)      # weighted control mean
+  
+  ATE <- EY1 - EY0
+  
+  # Optional: approximate SE using sandwich formula
+  se <- sqrt(var(w0 * (Y0 - EY0)) / (sum(w0)^2) + var(Y1) / length(Y1))
+  
+  return(list(ATE = ATE, SE = se, weights = w0))
+}
+
+
+aipw_var <- function(Y, D, ehat, m1x, m0x) {
+  n <- length(Y)
+  tau_i <- m1x - m0x + D*(Y - m1x)/ehat - (1 - D)*(Y - m0x)/(1 - ehat)
+  tau_hat <- mean(tau_i)
+  psi <- tau_i - tau_hat
+  se <- sqrt(sum(psi^2) / (n*(n-1)))       # same as sd(psi)/sqrt(n)
+  ci <- tau_hat + c(-1,1)*1.96*se
+  ci_width <- diff(ci)    # upper - lower
+  list(tau = tau_hat, se = se, ci = ci,ci_width = ci_width   )
+}
+
+aipw_fit <- function(dat, y, d,X) {
+  
+  
+  # Propensity score
+  ps <- glm(as.formula(paste("D~",paste(colnames(subset(dat,select=-c(y,D))),collapse = "+"))), data=dat, family=binomial())
+  ehat <- predict(ps, type="response")
+  model.formula<-as.formula(paste("y~",paste(colnames(subset(dat,select=-c(y,D))),collapse = "+")))
+  # Outcome models
+  m1 <- lm(model.formula, data=dat[d==1,])
+  m0 <-  lm(model.formula, data=dat[d==0,])
+  m1x <- predict(m1, newdata=dat)
+  m0x <- predict(m0, newdata=dat)
+  
+  aipw_var(y, d, ehat, m1x, m0x)
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
