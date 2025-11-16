@@ -171,3 +171,50 @@ lines(density(px[D == 0]), col = "blue")
 legend("topright", legend = c("Treated", "Control"),
        col = c("red", "blue"), lty = 1)
 # -----------------------------------------------------------------------------
+
+
+            ## ============================================================
+##  FUNCTION: Single panel boxplot
+## ============================================================
+panel_boxplot <- function(data, true_ate, panel_label, ylim_range=NULL) {
+  
+  boxplot(data,
+          las = 2,
+          main = panel_label,
+          cex.main = 1.4,
+          col = "white",
+          border = "black",
+          ylim = ylim_range)
+  
+  abline(h = true_ate, col = "red", lwd = 2)
+}
+
+## ============================================================
+##  INPUT: Your 4 datasets (already reordered)
+## ============================================================
+
+# Example (you already prepared these):
+# OM1PS1 <- OM1PS1[, c("IPW", "EBPS", "oCBPS", "CBPS","EBCW","AIPW","HD","ET")]
+# OM1PS2 <- OM1PS2[, c(...)]
+# OM2PS1 <- OM2PS1[, c(...)]
+# OM2PS2 <- OM2PS2[, c(...)]
+
+## ---- TRUE ATE VALUES (SET YOURS HERE!) ----
+true_OM1PS1 <- 1      # <-- change according to your design
+true_OM1PS2 <- 1      # <-- change
+true_OM2PS1 <- 10      # <-- change
+true_OM2PS2 <- 10      # <-- change
+
+## ============================================================
+##  PLOTTING 4 PANELS LIKE FIGURE (a), (b), (c), (d)
+## ============================================================
+
+par(mfrow = c(2,2), mar = c(5,5,3,2))
+
+panel_boxplot(OM1PS1, true_OM1PS1, "(a) OM1PS1", ylim_range=c(.65, 1.4))
+panel_boxplot(OM1PS2, true_OM1PS2, "(b) OM1PS2", ylim_range=c(.65, 1.4))
+panel_boxplot(OM2PS1, true_OM2PS1, "(c) OM2PS1", ylim_range=c(7, 14))
+panel_boxplot(OM2PS2, true_OM2PS2, "(d) OM2PS2", ylim_range=c(4, 12))
+
+
+
