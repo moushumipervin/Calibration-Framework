@@ -34,9 +34,10 @@ dat <- demo %>%
             age  = RIDAGEYR,
             sex  = factor(RIAGENDR, labels = c("Male", "Female")),
             race = factor(RIDRETH3)) %>%
-  left_join(bmx %>% select(SEQN, BMI = BMXBMI),             by = "SEQN") %>%
-  left_join(bpx %>% select(SEQN, SBP = BPXSY1, DBP = BPXDI1), by = "SEQN") %>%
-  left_join(glu %>% select(SEQN, Y = LBXGLU),               by = "SEQN")
+  left_join(bmx %>% dplyr::select(SEQN, BMI = BMXBMI), by = "SEQN") %>%
+  left_join(bpx %>% dplyr::select(SEQN, SBP = BPXSY1, DBP = BPXDI1), by = "SEQN") %>%
+  left_join(glu %>% dplyr::select(SEQN, Y = LBXGLU), by = "SEQN")
+
 
 ###############################################################################
 # 2. KEEP ONLY COMPLETE X (MAR STRUCTURE FOR Y)
@@ -167,11 +168,67 @@ print(PSSE_table)
 #DRESS
 ################################################################################
 
-DRESS<-DRESS(labelled_data   = as.matrix(labeled_final),
-      unlabelled_data = as.matrix(unlabeled_final),type="linear",tau=0.5,L=1,sd=TRUE,Kfolds=3)
+DRESS1<-DRESS(labelled_data   = as.matrix(labeled_final),
+      unlabelled_data = as.matrix(unlabeled_final),L=1,Kfolds=5)
 cat("\n--- PSSE Estimates ---\n")
 
-round((as.numeric(S[,"Std. Error"])^2)/(as.numeric(DRESS$sd.of.hattheta)^2),digits=3)
+round((as.numeric(S[,"Std. Error"])^2)/(as.numeric(DRESS1$sd.of.hattheta)^2),digits=3)
+
+
+
+Estimate <- as.numeric(DRESS1$Hattheta)
+StdError <- as.numeric(DRESS1$sd.of.hattheta)
+Variance <- StdError^2
+
+CI_Lower <- Estimate - 1.96 * StdError
+CI_Upper <- Estimate + 1.96 * StdError
+CI_Width <- CI_Upper - CI_Lower
+ARE<-round((as.numeric(S[,"Std. Error"])^2)/(Variance),digits=3)
+# Variable names aligned with the supervised model
+Variable <- names(coef(lm(model.formula, data = as.data.frame(labeled_final))))
+
+# ✅ Full PSSE table
+DRESS_table <- data.frame(
+  Variable = Variable,
+  Estimate = Estimate,
+  StdError = StdError,
+  Variance = Variance,
+  CI_Lower = CI_Lower,
+  CI_Upper = CI_Upper,
+  CI_Width = CI_Width,
+  ARE=ARE,
+  row.names = NULL
+)
+print(DRESS_table)
+
+
+# ---- DRESS -> Overleaf block (2 decimals) ----
+v <- DRESS_table$Variable
+to2 <- function(x) sprintf("%.2f", x)
+
+est <- paste(to2(DRESS_table$Estimate),  collapse = " & ")
+se  <- paste(to2(DRESS_table$StdError),  collapse = " & ")
+ciw <- paste(to2(DRESS_table$CI_Width),  collapse = " & ")
+are <- paste(to2(DRESS_table$ARE),       collapse = " & ")
+
+cat(
+  "% ================= DRESS ==================\n",
+  "\\multirow{4}{*}{\\shortstack{\\textbf{DRESS}}}\n",
+  "& Est  & ", est, " \\\\\n",
+  "& SE   & ", se,  " \\\\\n",
+  "& CIW  & ", ciw, " \\\\\n",
+  "& ARE  & ", are, " \\\\\n",
+  "\\hline\n",
+  sep = ""
+)
+
+
+
+################PI########################################
+
+
+
+
 ###############################################################################
 # 7. BUILD SEMI-SUPERVISED FULL DATA WITH D, pi.hat, ID
 ###############################################################################
