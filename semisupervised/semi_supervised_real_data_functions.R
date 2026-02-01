@@ -1,5 +1,5 @@
 
-setwd("C:/Users/moushumi/Desktop/Codes_Reproducibility/Final semi-supervised code")
+#setwd("C:/Users/moushumi/Desktop/Codes_Reproducibility/Final semi-supervised code")
 library(MASS)
 library(mgcv)
 library(CVXR)
@@ -442,7 +442,7 @@ PSSE1 <- function(labelled_data,unlabelled_data,c1=NULL,
 
 
 #####################DRESS###########################
-DRESS<- function(labelled_data,unlabelled_data,type="linear",tau=0.5,L,sd,Kfolds=5)
+DRESS<- function(labelled_data,unlabelled_data,L,Kfolds)
 {
   #-------------------------Arguments-------------------------------------------#
   # Purpose: This function is to implement the method proposed by
@@ -471,7 +471,7 @@ DRESS<- function(labelled_data,unlabelled_data,type="linear",tau=0.5,L,sd,Kfolds
   
   n=nrow(labelled_data)
   p=ncol(labelled_data)-1
-  N=nrow(labelled_data)
+  N=nrow(unlabelled_data)
   
   
   base_labelled<- polynomial(labelled_data[,-1],L)
@@ -518,25 +518,18 @@ DRESS<- function(labelled_data,unlabelled_data,type="linear",tau=0.5,L,sd,Kfolds
   
   
   ## estimating theta*(the target parameter)
-  if (type=="linear"){
+
     hattheta_DRESS<- lm(labelled_data[,1]~labelled_data[,-1],weights=exponential_phi_labelled)$coefficients
     
-  }else if (type=="logistic"){
-    hattheta_DRESS <- glm(labelled_data[,1]~labelled_data[,-1],family="quasibinomial",
-                          weights=exponential_phi_labelled)$coefficients
-  }
-  else if (type=="quantile"){
-    hattheta_DRESS <- rq(labelled_data[,1]~labelled_data[,-1],tau=tau,weights=exponential_phi_labelled)$coefficients
-  }
   
   
   hattheta_DRESS = append(list("Hattheta"=hattheta_DRESS),list("error"=error_svd))
   
   
   ### estimating the sd
-  if(sd==TRUE){
+
     
-    if(type=="linear"){
+   
       
       
       X_secondmoment_inverse=solve(t(cbind(rep(1,N),unlabelled_data))%*%cbind(rep(1,N),unlabelled_data)/N) 
@@ -595,151 +588,88 @@ DRESS<- function(labelled_data,unlabelled_data,type="linear",tau=0.5,L,sd,Kfolds
       
       Var_matrix_hat = X_secondmoment_inverse%*%Vc_hat_semi%*%X_secondmoment_inverse 
       sd_hattheta_DRESS = sqrt(diag(Var_matrix_hat/n))
-    }
     
-    if(type=="logistic"){
-      
-      exp_linear_combined <- as.vector(cbind(rep(1,N),unlabelled_data)%*%hattheta_DRESS[[1]])
-      weights_second_derivative <- 1/(1+exp(-exp_linear_combined))^2*exp(-exp_linear_combined)
-      X_secondmoment_inverse=solve(t(weights_second_derivative*cbind(rep(1,N),unlabelled_data))%*%cbind(rep(1,N),unlabelled_data)/N) 
-      
-      set.seed(20218080)
-      index=createFolds(1:n, k = Kfolds) # data splitting
-      W1_test = vector()
-      
-      
-      for(k in 1:Kfolds){
-        
-        index_k=as.vector(index[[k]])
-        Yt_train = labelled_data[-index_k,1]
-        Xt_train = labelled_data[-index_k,-1]
-        Zt_train = base_labelled[-index_k,]
-        Yt_test = labelled_data[index_k,1]
-        Xt_test = labelled_data[index_k,-1]
-        Zt_test = base_labelled[index_k,]
-        
-        nrow_Xt_train = n-length(index_k)
-        nrow_Xt_test = length(index_k)
-        
-        
-        
-        # projection matrix A(theta) estimation 
-        
-        hattheta_supervised_train_cv <- hattheta_DRESS[[1]]#lm(Yt_train~Xt_train)$coefficients
-        exp_linear_combined_train <- as.vector(cbind(rep(1,nrow_Xt_train),Xt_train)%*%hattheta_supervised_train_cv)
-        L_firstder_train_cv <- as.vector(1/(1+exp(-exp_linear_combined_train))-Yt_train)*
-          cbind(rep(1,nrow_Xt_train),Xt_train)
-        L_firstder_projection_cof <- solve(t(Zt_train)%*%Zt_train/nrow_Xt_train)%*%
-          t(Zt_train)%*%L_firstder_train_cv/nrow_Xt_train
-        
-        
-        # estimate variance by test data
-        
-        exp_linear_combined_test <- as.vector(cbind(rep(1,nrow_Xt_test),Xt_test)%*%hattheta_supervised_train_cv)
-        L_firstder_test_cv <- as.vector(1/(1+exp(-exp_linear_combined_test))-Yt_test)*
-          cbind(rep(1,nrow_Xt_test),Xt_test)
-        
-        W1_test_k <- L_firstder_test_cv-Zt_test%*%L_firstder_projection_cof
-        W1_test<- rbind(W1_test,W1_test_k)
-        
-      }
-      
-      
-      exp_linear_combined_total <- as.vector(cbind(rep(1,n),labelled_data[,-1])%*%hattheta_DRESS[[1]])
-      L_firstder_total <- (1/(1+exp(-exp_linear_combined_total))-labelled_data[,1])*
-        (cbind(rep(1,n),labelled_data[,-1]))
-      L_firstder_projection_cof_total <- solve(t(base_labelled)%*%base_labelled/n)%*%t(base_labelled)%*%L_firstder_total/n
-      W2_total <-  base_unlabelled%*%L_firstder_projection_cof_total
-      
-      W1_covariance <- t(W1_test)%*%W1_test/n
-      W2_covariance <- t(W2_total)%*%W2_total/N
-      Vc_hat_semi = W1_covariance+(n/N)*W2_covariance
-      
-      Var_matrix_hat = X_secondmoment_inverse%*%Vc_hat_semi%*%X_secondmoment_inverse 
-      sd_hattheta_DRESS = sqrt(diag(Var_matrix_hat/n))
-      
-    }
     
-    if(type=="quantile"){
-      
-      
-      # estimating $V_c$ by K-folds CV
-      
-      set.seed(20218080)
-      index=createFolds(1:n, k = Kfolds) # data splitting
-      W1_test = vector()
-      
-      
-      for(k in 1:Kfolds){
-        
-        index_k=as.vector(index[[k]])
-        Yt_train = labelled_data[-index_k,1]
-        Xt_train = labelled_data[-index_k,-1]
-        Zt_train = base_labelled[-index_k,]
-        Yt_test = labelled_data[index_k,1]
-        Xt_test = labelled_data[index_k,-1]
-        Zt_test = base_labelled[index_k,]
-        
-        nrow_Xt_train = n-length(index_k)
-        nrow_Xt_test = length(index_k)
-        
-        
-        residual_train_indicator <- as.vector(Yt_train-cbind(rep(1,nrow_Xt_train),Xt_train)%*%hattheta_DRESS[[1]])<=0
-        L_firstder_train_cv <- (residual_train_indicator-tau)*cbind(rep(1,nrow_Xt_train),Xt_train)
-        L_firstder_projection_cof <- solve(t(Zt_train)%*%Zt_train)%*%
-          t(Zt_train)%*%L_firstder_train_cv
-        
-        
-        # estimate variance by test data
-        
-        residual_test_indicator <- as.vector(Yt_test-cbind(rep(1,nrow_Xt_test),Xt_test)%*%hattheta_DRESS[[1]])<=0
-        L_firstder_test_cv <- (residual_test_indicator-tau)*cbind(rep(1,nrow_Xt_test),Xt_test)
-        
-        W1_test_k <- L_firstder_test_cv-Zt_test%*%L_firstder_projection_cof
-        W1_test<- rbind(W1_test,W1_test_k)
-        
-      }
-      
-      
-      residual_total_indicator <- as.vector(labelled_data[,1]-cbind(rep(1,n),labelled_data[,-1])%*%hattheta_DRESS[[1]])<=0
-      L_firstder_total <- (residual_total_indicator-tau)*(cbind(rep(1,n),labelled_data[,-1]))
-      L_firstder_projection_cof_total <- solve(t(base_labelled)%*%base_labelled)%*%t(base_labelled)%*%L_firstder_total
-      W2_total <-  base_unlabelled%*%L_firstder_projection_cof_total
-      
-      W1_covariance <- t(W1_test)%*%W1_test/n
-      W2_covariance <- t(W2_total)%*%W2_total/N
-      Vc_hat_semi = W1_covariance+(n/N)*W2_covariance
-      
-      
-      
-      ##estimating the second derivatives (M)
-      B=2000
-      G=mvrnorm(B,rep(0,(p+1)),diag(rep(1,(p+1))))
-      theta_check_semi <- apply(1/sqrt(n)*G,1,function(t) hattheta_DRESS[[1]]+t)
-      residual_semi_indicator= apply(cbind(rep(1,n),labelled_data[,-1])%*%theta_check_semi,2, function(t) as.vector(labelled_data[,1]-t)<=0)
-      U_check_semi <- t(residual_semi_indicator-tau)%*%cbind(rep(1,n),labelled_data[,-1])/sqrt(n)
-      
-      hat_M_semi <- t(apply(U_check_semi,2, function(t) lm(t~G-1)$coefficients))
-      #X_secondmoment_inverse <- solve((hat_M_semi+t(hat_M_semi))/2)
-      X_secondmoment_inverse<- solve(hat_M_semi)
-      
-      
-      
-      Var_matrix_hat = X_secondmoment_inverse%*%Vc_hat_semi%*%t(X_secondmoment_inverse)
-      sd_hattheta_DRESS = sqrt(diag(Var_matrix_hat)/n)
-      
-      
-      
-      
-    }
+   
     
     hattheta_DRESS <- append(hattheta_DRESS,list("sd.of.hattheta"=sd_hattheta_DRESS))
-  }
+  
   
   
   
   return(hattheta_DRESS)
 }
+
+
+
+###########################(2) PI proposed by Azriel et al. (2021) #################################
+PI <- function(labelled_data,unlabelled_data)
+{
+  #---------------------------------Arguments------------------------------------------#
+  # Purpose: This function is to implement the method proposed by Azriel et al.(2021)
+  #          for linear working model. 
+  #
+  # Input:
+  #       labelled_data: Same as in the function "PSSE". 
+  #       unlabelled_data: Same as in the function "PSSE".     
+  #
+  # Output: 
+  #        Hattheta: The estimate for the target parameter. 
+  #------------------------------------------------------------------------------------#
+  n=nrow(labelled_data)
+  p=ncol(labelled_data)-1
+  N=nrow(unlabelled_data)
+  
+  # combine all the covairates 
+  X_combined <- rbind(labelled_data[,-1],unlabelled_data)
+  X_labelled <- labelled_data[,-1]
+  
+  hat_beta_initial <- numeric()
+  X_dot <- matrix(rep(0,n*p),n,p) 
+  delta_tilde <- matrix(rep(0,n*p),n,p)
+  
+  for (j in 1:p)
+  {
+    ## first step 
+    coefficients_negtive_j = lm(X_combined[,j]~X_combined[,-j])$coefficients #unlabeled data
+    X_j_dot = X_labelled[,j] - cbind(rep(1,n),X_labelled[,-j]) %*% coefficients_negtive_j #labeled data projection error
+    X_j_dot_total = X_combined[,j] - cbind(rep(1,n+N),X_combined[,-j]) %*% coefficients_negtive_j
+    X_j_dot_square_sampleaverage=mean(X_j_dot_total^2)
+    
+    
+    ## step step 
+    W_j = as.vector(labelled_data[,1])*X_j_dot/X_j_dot_square_sampleaverage
+    U1 = X_j_dot/X_j_dot_square_sampleaverage
+    X_dot[,j] = as.vector(U1) 
+    U = matrix(rep(0,n*p),n,p) 
+    for (jj in 1:p)
+    {
+      if (jj==j)
+      {
+        U[,jj] = X_labelled[,jj]*X_j_dot/X_j_dot_square_sampleaverage-1
+      }
+      
+      else
+      {
+        U[,jj] = X_labelled[,jj]*X_j_dot/X_j_dot_square_sampleaverage
+      }
+      
+    }
+    
+    delta_tilde[,j] = W_j-as.matrix(cbind(rep(1,n),U1,U)) %*% (lm(W_j~U1+U)$coefficients)
+    hat_beta_j = lm(W_j~U1+U)$coefficients[1]
+    hat_beta_initial = c(hat_beta_initial,hat_beta_j)
+  }
+  hat_alpha = mean(labelled_data[,1])-t(hat_beta_initial)%*%colMeans(X_labelled)
+  hat_theta_Azriel = as.vector(c(hat_alpha,hat_beta_initial))
+  
+  hat_theta_Azriel = list("Hattheta"=hat_theta_Azriel)
+  
+  
+  
+  return(hat_theta_Azriel)
+}
+#PI(data_labelled,data_unlabelled)
 
 
 
