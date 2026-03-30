@@ -4,18 +4,12 @@
 ## How to Run
 
 ### Simulation (ATE)
-- Go to: `Final code/Simulation/`
+- Go to: `ATE_estimation/Final code/Simulation/`
 - Run: `ATE_simulation_run.R`
 
 ### Real Data Analysis
-- Go to: `Final code/Real_data_code/`
+- Go to: `ATE_estimation/Final code/Real_data_code/`
 - Run: `ATE_real_data_analysis_final code.R`
-
-### Missing Covariates Simulation
-- Go to: `Covariates_missing/Final simulation code/`
-- Run: `Covariates_missing_final_code.R`
-
----
 
 ## Notes
 
