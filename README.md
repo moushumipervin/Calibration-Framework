@@ -1,6 +1,32 @@
 ########################################################################################################################################################################
 # Causal Inference: Simulation and real data application implementation code instructions
 ########################################################################################################################################################################
+## How to Run
+
+### Simulation (ATE)
+- Go to: `Final code/Simulation/`
+- Run: `ATE_simulation_run.R`
+
+### Real Data Analysis
+- Go to: `Final code/Real_data_code/`
+- Run: `ATE_real_data_analysis_final code.R`
+
+### Missing Covariates Simulation
+- Go to: `Covariates_missing/Final simulation code/`
+- Run: `Covariates_missing_final_code.R`
+
+---
+
+## Notes
+
+- Helper files are automatically used by the main scripts  
+- No need to run helper files separately  
+- Ensure required R packages are installed  
+
+
+
+
+
 This repository provides code to reproduce both simulation studies and real data analyses for Average Treatment Effect (ATE) estimation in causal inference. 
 The main scripts for each analysis are located in the corresponding folders, while additional R files provide supporting helper functions that are automatically used by the main scripts. Below is the final flow chart:
 ATE_estimation/
