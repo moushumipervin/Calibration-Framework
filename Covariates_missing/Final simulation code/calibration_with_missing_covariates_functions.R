@@ -694,7 +694,7 @@ estimate_theta_nested_kfold_CVXR_HD <- function(theta_init, data_full, K, seed) 
     D  <- data_all$D
     I1 <- which(D == 1)
     y  <- data_all$y
-    g  <- -sqrt(data_all$D.hat)
+    g  <- -sqrt(data_all$D.hat)/2
     
     error <- y - as.numeric(new.data1 %*% theta)
     H <- new.data1 * error
