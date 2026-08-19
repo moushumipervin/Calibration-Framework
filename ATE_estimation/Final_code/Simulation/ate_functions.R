@@ -318,12 +318,11 @@ solve_calibration_side <- function(data_fold, target_treatment = 1,
   y_obs <- dat$y[idx]
 
   w <- CVXR::Variable(length(idx), pos = TRUE)
-
-  if (target_treatment == 1) {
-    g_full <- -sqrt(dat$pi.hat)
-  } else {
-    g_full <- -sqrt(1 - dat$pi.hat)
-  }
+if (target_treatment == 1) {
+  g_full <- -sqrt(dat$pi.hat) / 2
+} else {
+  g_full <- -sqrt(1 - dat$pi.hat) / 2
+}
 
   if (objective == "et") {
     if (target_treatment == 1) {
