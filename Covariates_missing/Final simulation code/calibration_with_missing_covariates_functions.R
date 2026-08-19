@@ -494,7 +494,7 @@ estimate_theta_EM_kfold_CVXR_HD <- function(th, data_full, K, seed,
   D  <- data_all$D
   I1 <- which(D == 1)
   y  <- data_all$y
-  g  <- -sqrt(data_all$D.hat)
+  g  <- -sqrt(data_all$D.hat)/2
   
   theta <- as.matrix(th)
   iter <- 0
