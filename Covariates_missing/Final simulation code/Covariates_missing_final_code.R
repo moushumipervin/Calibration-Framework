@@ -16,7 +16,9 @@ k    <- 3
 p    <- 2
 
 # True regression coefficients: beta0, beta1, beta2
-beta_true <- c(1, 1, 2)
+beta_true_OR1 <- c(1, 1, 2)
+
+beta_true_OR2 <- c(0.5, 0.795, 1)
 
 # Put 10 if you want SE and RMSE reported as (x10), 
 scale_factor <- 10
@@ -90,7 +92,19 @@ for (s in 1:nrow(scenario_grid)) {
   current_OR    <- scenario_grid$OR[s]
   current_PS    <- scenario_grid$PS[s]
   current_label <- scenario_grid$label[s]
-  
+  if (current_OR == 1) {
+  beta_true_current <- beta_true_OR1
+} else if (current_OR == 2) {
+  beta_true_current <- beta_true_OR2
+}
+
+   # Print the target being used
+  cat(
+    "Scenario:", current_label,
+    "Target:",
+    paste(round(beta_true_current, 6), collapse = ", "),
+    "\n"
+  )
   cat("Running scenario:", current_label, "\n")
   
   ###########################################################################
@@ -215,11 +229,11 @@ for (s in 1:nrow(scenario_grid)) {
   ###########################################################################
   # Summaries for this scenario
   ###########################################################################
-  stats_full <- get_summary_stats(beta_full,  beta_true, scale_factor = scale_factor)
-  stats_cc   <- get_summary_stats(beta_cc,    beta_true, scale_factor = scale_factor)
-  stats_ht   <- get_summary_stats(beta_HT,    beta_true, scale_factor = scale_factor)
-  stats_aipw <- get_summary_stats(beta_AIPW1, beta_true, scale_factor = scale_factor)
-  stats_hd   <- get_summary_stats(beta_HD_EM, beta_true, scale_factor = scale_factor)
+  stats_full <- get_summary_stats(beta_full,   beta_true_current, scale_factor = scale_factor)
+  stats_cc   <- get_summary_stats(beta_cc,     beta_true_current, scale_factor = scale_factor)
+  stats_ht   <- get_summary_stats(beta_HT,     beta_true_current, scale_factor = scale_factor)
+  stats_aipw <- get_summary_stats(beta_AIPW1,  beta_true_current, scale_factor = scale_factor)
+  stats_hd   <- get_summary_stats(beta_HD_EM,  beta_true_current, scale_factor = scale_factor)
   
   stats_list <- list(
     Full = stats_full,
