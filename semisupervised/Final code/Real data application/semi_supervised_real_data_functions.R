@@ -1083,7 +1083,7 @@ estimate_theta_EM_kfold_CVXR_HD <- function(th, data_full, K, seed, max.iter,eps
     r <- ncol(A)
     w <- CVXR::Variable(length(I1), pos = TRUE)
     a <- rep(1/length(I1), length(I1))  # base (uniform)
-    g<--sqrt(data_all$pi.hat)
+    g<--sqrt(data_all$pi.hat)/2
     
     constr <- list(sum(w) == 1,
                    sum(w*g[I1]) == mean(g))
@@ -1104,7 +1104,7 @@ estimate_theta_EM_kfold_CVXR_HD <- function(th, data_full, K, seed, max.iter,eps
       ))
     }
     
-    objective <- CVXR::Minimize(-sum(2*sqrt(w)))
+    objective <- CVXR::Minimize(-sum(sqrt(w)))
     
     prob <- CVXR::Problem(objective, constr)
     sol  <- CVXR::solve(prob,solver = "ECOS")
