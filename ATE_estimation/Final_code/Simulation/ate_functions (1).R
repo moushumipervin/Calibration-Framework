@@ -7970,23 +7970,6 @@ panel_boxplot_gg <- function(data, true_ate, panel_label, ylim_range = NULL) {
 # ------------------------------
 # Combines the four scenario-specific boxplots into the final 2 x 2 figure.
 
-plot_results <- lapply(
-  results_clean,
-  function(x) {
-    x[, c(
-      "IPW",
-      "EBPS",
-      "oCBPS",
-      "CBPS",
-      "EBCW",
-      "AIPW_LM",
-      "AIPW_GAM",
-      "ET",
-      "HD",
-      "CE"
-    ), drop = FALSE]
-  }
-)
 
 
 
