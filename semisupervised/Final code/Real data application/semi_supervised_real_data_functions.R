@@ -996,14 +996,14 @@ estimate_theta_EM_kfold_CVXR_ET <- function(th, data_full, K, seed, max.iter,eps
     
     
     prob <- CVXR::Problem(objective, constr)
-    sol  <- CVXR::solve(prob,solver = "ECOS")
+    sol  <- CVXR::psolve(prob,solver = "ECOS")
     
     
-    if (sol$status != "optimal") {
+    if (CVXR::status(prob) != "optimal") {
       return(matrix(NA_real_, nrow=1, ncol=ncol(new.data1)))
     }
     
-    W  <- as.numeric(sol$getValue(w))
+    W  <- as.numeric(CVXR::value(w))
     Q  <- new.data1[I1, , drop=FALSE]
     Y1 <- data_all$Y[I1]
     A<-t(Q) %*% diag(W) %*% Q
@@ -1107,14 +1107,14 @@ estimate_theta_EM_kfold_CVXR_HD <- function(th, data_full, K, seed, max.iter,eps
     objective <- CVXR::Minimize(-sum(sqrt(w)))
     
     prob <- CVXR::Problem(objective, constr)
-    sol  <- CVXR::solve(prob,solver = "ECOS")
+    sol  <- CVXR::psolve(prob,solver = "ECOS")
     
     
-    if (sol$status != "optimal") {
+    if (CVXR::status(prob) != "optimal") {
       return(matrix(NA_real_, nrow=1, ncol=ncol(new.data1)))
     }
     
-    W  <- as.numeric(sol$getValue(w))
+    W  <- as.numeric(CVXR::value(w))
     Q  <- new.data1[I1, , drop=FALSE]
     Y1 <- data_all$Y[I1]
     A<-t(Q) %*% diag(W) %*% Q
@@ -1218,9 +1218,9 @@ estimate_theta_nested_kfold_CVXR_optim <- function(theta_init, data_full, K , se
     
     objective <- CVXR::Minimize(sum(CVXR::kl_div(w, ones)))
     prob <- CVXR::Problem(objective, constr)
-    sol  <- CVXR::solve(prob,solver = "ECOS")
+    sol  <- CVXR::psolve(prob,solver = "ECOS")
     
-    if (sol$status != "optimal") {
+    if (CVXR::status(prob) != "optimal") {
       return(NA_real_)
     }
     
@@ -1229,7 +1229,7 @@ estimate_theta_nested_kfold_CVXR_optim <- function(theta_init, data_full, K , se
     lamda <- lamda[-3]                    # drop constraint #3 if needed
     lambda_hat <- -unlist(lamda)
     
-    W <- as.numeric(sol$getValue(w))
+    W <- as.numeric(CVXR::value(w))
     val <- -(sum(W)) + as.vector(U1 %*% lambda_hat)
     return(val)
   }
@@ -1286,15 +1286,15 @@ estimate_theta_nested_kfold_CVXR_optim <- function(theta_init, data_full, K , se
   
   objective <- CVXR::Minimize(sum(CVXR::kl_div(w, ones)))
   prob <- CVXR::Problem(objective, constr)
-  sol  <- CVXR::solve(prob,solver = "ECOS")
+  sol  <- CVXR::psolve(prob,solver = "ECOS")
   
-  if (sol$status != "optimal") {
+  if (CVXR::status(prob) != "optimal") {
     return(NA_real_)
   }
   
   
   
-  W <- as.numeric(sol$getValue(w))
+  W <- as.numeric(CVXR::value(w))
   
   # Return estimated theta and value
   
@@ -1383,9 +1383,9 @@ estimate_theta_nested_kfold_CVXR_nlm <- function(theta_init, data_full, K, seed)
     
     objective <- CVXR::Minimize(sum(CVXR::kl_div(w, ones)))
     prob <- CVXR::Problem(objective, constr)
-    sol  <- CVXR::solve(prob)
+    sol  <- CVXR::psolve(prob)
     
-    if (sol$status != "optimal") {
+    if (CVXR::status(prob) != "optimal") {
       return(NA_real_)
     }
     
@@ -1393,7 +1393,7 @@ estimate_theta_nested_kfold_CVXR_nlm <- function(theta_init, data_full, K, seed)
     lamda <- lamda[-3]
     lambda_hat <- -unlist(lamda)
     
-    W <- as.numeric(sol$getValue(w))
+    W <- as.numeric(CVXR::value(w))
     val <- -(sum(W)) + as.vector(U1 %*% lambda_hat)
     return(val)
   }
@@ -1449,13 +1449,13 @@ estimate_theta_nested_kfold_CVXR_nlm <- function(theta_init, data_full, K, seed)
   
   objective <- CVXR::Minimize(sum(CVXR::kl_div(w, ones)))
   prob <- CVXR::Problem(objective, constr)
-  sol  <- CVXR::solve(prob)
+  sol  <- CVXR::psolve(prob)
   
-  if (sol$status != "optimal") {
+  if (CVXR::status(prob) != "optimal") {
     message("[Final CVXR] solver did not converge, returning NA for w_hat.")
     W <- rep(NA_real_, length(I1))
   } else {
-    W <- as.numeric(sol$getValue(w))
+    W <- as.numeric(CVXR::value(w))
   }
   
   # --- 5. Return ---
