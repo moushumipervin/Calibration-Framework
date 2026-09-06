@@ -173,6 +173,24 @@ true_ates <- c(
 # -------------------------------
 # Final 2x2 boxplot
 # -------------------------------
+plot_results <- lapply(
+  results_clean,
+  function(x) {
+    x[, c(
+      "IPW",
+      "EBPS",
+      "oCBPS",
+      "CBPS",
+      "EBCW",
+      "AIPW_LM",
+      "AIPW_GAM",
+      "ET",
+      "HD",
+      "CE"
+    ), drop = FALSE]
+  }
+)
+
 plot_all <- plot_4panel_boxplots(plot_results)
 
 
