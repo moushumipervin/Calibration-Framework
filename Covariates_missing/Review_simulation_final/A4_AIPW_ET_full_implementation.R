@@ -1,0 +1,848 @@
+###############################################################################
+# A4_AIPW_ET_full_implementation.R
+#
+# Kim memo A4: compare three constructions of b(beta)
+#   1. Plug-in
+#   2. Exact conditional expectation
+#   3. Cross-fitted direct regression of U(beta) on x and y
+#
+# Compare under TWO estimator families:
+#   AIPW and ET
+#
+# This file is intentionally separate from the original implementation.
+###############################################################################
+
+source("missing_covariate_GEC_clean.R")
+
+if (!requireNamespace("dplyr", quietly = TRUE)) {
+  stop("Please install dplyr: install.packages('dplyr')")
+}
+if (!requireNamespace("MASS", quietly = TRUE)) {
+  stop("Please install MASS: install.packages('MASS')")
+}
+if (!requireNamespace("numDeriv", quietly = TRUE)) {
+  stop("Please install numDeriv: install.packages('numDeriv')")
+}
+
+library(dplyr)
+
+###############################################################################
+# 1. SETTINGS
+###############################################################################
+
+seed <- 1234
+M    <- 500
+n    <- 1000
+K    <- 3
+
+beta_true_OR1 <- c(1, 1, 2)
+beta_true_OR2 <- c(0.500, 0.795, 1.000)
+parameter_names <- c("beta0", "beta1", "beta2")
+
+scenario_grid <- data.frame(
+  OR = c(1, 1, 2, 2),
+  PS = c(1, 2, 1, 2),
+  Scenario = c("OR1PS1", "OR1PS2", "OR2PS1", "OR2PS2"),
+  stringsAsFactors = FALSE
+)
+
+###############################################################################
+# 2. COMPLETE-DATA SCORE FOR ARBITRARY z
+###############################################################################
+
+score_given_z <- function(beta, x, y, z) {
+  beta <- as.numeric(beta)
+  X <- cbind(1, x, z)
+  resid <- y - as.numeric(X %*% beta)
+  U <- X * resid
+  colnames(U) <- parameter_names
+  U
+}
+
+###############################################################################
+# 3A. A4(a): PLUG-IN b(beta)
+###############################################################################
+
+b_plugin_A4 <- function(beta, data_all) {
+  score_given_z(
+    beta = beta,
+    x = data_all$x,
+    y = data_all$y,
+    z = data_all$z.hat
+  )
+}
+
+###############################################################################
+# 3B. A4(b): EXACT BERNOULLI CONDITIONAL EXPECTATION
+###############################################################################
+
+b_exact_A4 <- function(beta, data_all) {
+  pz <- pmin(pmax(as.numeric(data_all$z.hat), 1e-8), 1 - 1e-8)
+
+  U0 <- score_given_z(
+    beta = beta,
+    x = data_all$x,
+    y = data_all$y,
+    z = 0
+  )
+
+  U1 <- score_given_z(
+    beta = beta,
+    x = data_all$x,
+    y = data_all$y,
+    z = 1
+  )
+
+  b <- (1 - pz) * U0 + pz * U1
+  colnames(b) <- parameter_names
+  b
+}
+
+###############################################################################
+# 4. FIXED FOLDS FOR DIRECT SCORE REGRESSION
+###############################################################################
+
+make_A4_fold_id <- function(data_all, K = 3, seed = 1234) {
+  set.seed(seed)
+  N <- nrow(data_all)
+  sample(rep(seq_len(K), length.out = N))
+}
+
+###############################################################################
+# 5. OBSERVED-DATA BASIS FOR DIRECT SCORE REGRESSION
+#    Match Kim's wording literally: regress U(beta) on x and y.
+###############################################################################
+
+make_direct_basis <- function(data_all) {
+  data.frame(
+    x = data_all$x,
+    y = data_all$y
+  )
+}
+
+###############################################################################
+# 6. A4(c): CROSS-FITTED DIRECT REGRESSION OF U(beta) ON x AND y
+###############################################################################
+
+b_direct_A4 <- function(beta, data_all, fold_id, K = 3) {
+  beta <- as.numeric(beta)
+  N <- nrow(data_all)
+  basis <- make_direct_basis(data_all)
+
+  # True complete-data score; only training rows with D=1 are used in fitting.
+  U_true <- score_given_z(
+    beta = beta,
+    x = data_all$x,
+    y = data_all$y,
+    z = data_all$z
+  )
+
+  b_hat <- matrix(NA_real_, nrow = N, ncol = 3)
+  colnames(b_hat) <- parameter_names
+
+  for (k in seq_len(K)) {
+    train_idx <- which(data_all$D == 1 & fold_id != k)
+    valid_idx <- which(fold_id == k)
+
+    if (length(train_idx) < 20) {
+      stop("Too few complete cases in a direct-score training fold.")
+    }
+
+    train_basis <- basis[train_idx, , drop = FALSE]
+    valid_basis <- basis[valid_idx, , drop = FALSE]
+
+    for (j in seq_len(3)) {
+      train_dat <- data.frame(
+        score = U_true[train_idx, j],
+        train_basis
+      )
+
+      fit_j <- lm(
+        score ~ x + y,
+        data = train_dat
+      )
+
+      b_hat[valid_idx, j] <- as.numeric(
+        predict(fit_j, newdata = valid_basis)
+      )
+    }
+  }
+
+  if (any(!is.finite(b_hat))) {
+    stop("Non-finite direct-score predictions.")
+  }
+
+  b_hat
+}
+
+###############################################################################
+# 7. SELECTOR FOR b(beta)
+###############################################################################
+
+get_b_A4 <- function(
+    beta,
+    data_all,
+    b_method = c("plugin", "exact", "direct"),
+    fold_id = NULL,
+    K = 3) {
+
+  b_method <- match.arg(b_method)
+
+  if (b_method == "plugin") {
+    return(b_plugin_A4(beta = beta, data_all = data_all))
+  }
+
+  if (b_method == "exact") {
+    return(b_exact_A4(beta = beta, data_all = data_all))
+  }
+
+  if (is.null(fold_id)) {
+    stop("fold_id is required for direct-score regression.")
+  }
+
+  b_direct_A4(
+    beta = beta,
+    data_all = data_all,
+    fold_id = fold_id,
+    K = K
+  )
+}
+
+###############################################################################
+# 8. AIPW ESTIMATING EQUATION FOR A4
+###############################################################################
+
+AIPW_equation_A4 <- function(
+    beta,
+    data_all,
+    b_method = c("plugin", "exact", "direct"),
+    fold_id = NULL,
+    K = 3) {
+
+  b_method <- match.arg(b_method)
+  beta <- as.numeric(beta)
+
+  ps <- fit_ps_missingcov(data_all)
+  pi <- ps$pi
+  D <- as.numeric(data_all$D)
+
+  U <- missingcov_U(
+    beta = beta,
+    data_all = data_all
+  )
+
+  b <- get_b_A4(
+    beta = beta,
+    data_all = data_all,
+    b_method = b_method,
+    fold_id = fold_id,
+    K = K
+  )
+
+  Psi <- b
+  I1 <- which(D == 1)
+
+  Psi[I1, ] <-
+    b[I1, , drop = FALSE] +
+    (U[I1, , drop = FALSE] - b[I1, , drop = FALSE]) / pi[I1]
+
+  colMeans(Psi)
+}
+
+###############################################################################
+# 9. AIPW SOLVER FOR A4
+###############################################################################
+
+estimate_AIPW_A4 <- function(
+    data_all,
+    b_method = c("plugin", "exact", "direct"),
+    fold_id = NULL,
+    K = 3,
+    beta_start = NULL,
+    tol = 1e-8,
+    max_iter = 50) {
+
+  b_method <- match.arg(b_method)
+
+  if (is.null(beta_start)) {
+    fit0 <- tryCatch(
+      estimate_aipw_missingcov(data_all),
+      error = function(e) NULL
+    )
+
+    if (!is.null(fit0) && all(is.finite(fit0$beta))) {
+      beta <- as.numeric(fit0$beta)
+    } else {
+      beta <- rep(0, 3)
+    }
+  } else {
+    beta <- as.numeric(beta_start)
+  }
+
+  converged <- FALSE
+  iter <- 0
+
+  for (iter in seq_len(max_iter)) {
+    f0 <- AIPW_equation_A4(
+      beta = beta,
+      data_all = data_all,
+      b_method = b_method,
+      fold_id = fold_id,
+      K = K
+    )
+
+    if (max(abs(f0)) < tol) {
+      converged <- TRUE
+      break
+    }
+
+    J <- safe_jacobian(
+      func = function(bb) {
+        AIPW_equation_A4(
+          beta = bb,
+          data_all = data_all,
+          b_method = b_method,
+          fold_id = fold_id,
+          K = K
+        )
+      },
+      x = beta
+    )
+
+    step <- tryCatch(
+      solve(J, f0),
+      error = function(e) MASS::ginv(J) %*% f0
+    )
+
+    step <- as.numeric(step)
+
+    if (max(abs(step)) > 5) {
+      step <- step / max(abs(step)) * 5
+    }
+
+    beta_new <- beta - step
+
+    if (max(abs(beta_new - beta)) < tol) {
+      beta <- beta_new
+      converged <- TRUE
+      break
+    }
+
+    beta <- beta_new
+  }
+
+  final_eq <- AIPW_equation_A4(
+    beta = beta,
+    data_all = data_all,
+    b_method = b_method,
+    fold_id = fold_id,
+    K = K
+  )
+
+  list(
+    beta = beta,
+    theta = matrix(beta, ncol = 1),
+    converged = converged,
+    iterations = iter,
+    equation_residual = max(abs(final_eq))
+  )
+}
+
+###############################################################################
+# 10. A4-SPECIFIC GEC ENGINE
+#     SEPARATE NAME: original estimate_theta_missingcov_GEC() is untouched.
+###############################################################################
+
+estimate_theta_missingcov_GEC_A4_compare <- function(
+    th,
+    data_full,
+    K = 3,
+    seed = 1234,
+    entropy = c("ET", "HD", "CE"),
+    b_method = c("plugin", "exact", "direct"),
+    max.iter = 100,
+    eps = 1e-6,
+    lambda_maxit = 1000,
+    lambda_tol = 1e-10,
+    damping = 1) {
+
+  entropy <- match.arg(entropy)
+  b_method <- match.arg(b_method)
+
+  data_all <- prepare_missingcov_data(
+    data_full = data_full,
+    K = K,
+    seed = seed
+  )
+
+  D <- as.numeric(data_all$D)
+  I1 <- which(D == 1)
+  y <- data_all$y
+  pi_hat <- data_all$pi.hat
+
+  Xtrue <- cbind(
+    1,
+    x = data_all$x,
+    z = data_all$z
+  )
+
+  Q <- Xtrue[I1, , drop = FALSE]
+  Y1 <- y[I1]
+
+  # Fixed direct-score folds for every theta iteration.
+  direct_fold <- NULL
+  if (b_method == "direct") {
+    direct_fold <- make_A4_fold_id(
+      data_all = data_all,
+      K = K,
+      seed = seed + 50000
+    )
+  }
+
+  theta <- as.numeric(th)
+  if (length(theta) != 3) {
+    stop("Starting theta must have length 3.")
+  }
+
+  lambda_current <- NULL
+
+  solve_current_lambda <- function(b_mat, lambda_start) {
+    if (entropy == "ET") {
+      return(
+        solve_lambda_ET_dual(
+          b_mat = b_mat,
+          pi_hat = pi_hat,
+          D = D,
+          lambda_start = lambda_start,
+          maxit = lambda_maxit,
+          reltol = lambda_tol
+        )
+      )
+    }
+
+    if (entropy == "HD") {
+      return(
+        solve_lambda_HD_dual(
+          b_mat = b_mat,
+          pi_hat = pi_hat,
+          D = D,
+          lambda_start = lambda_start,
+          maxit = lambda_maxit,
+          reltol = lambda_tol
+        )
+      )
+    }
+
+    solve_lambda_CE_dual(
+      b_mat = b_mat,
+      pi_hat = pi_hat,
+      D = D,
+      lambda_start = lambda_start,
+      maxit = lambda_maxit,
+      reltol = lambda_tol
+    )
+  }
+
+  diff_theta <- Inf
+  iter <- 0
+
+  for (iter in seq_len(max.iter)) {
+    b_mat <- get_b_A4(
+      beta = theta,
+      data_all = data_all,
+      b_method = b_method,
+      fold_id = direct_fold,
+      K = K
+    )
+
+    if (any(!is.finite(b_mat))) {
+      stop("Non-finite b(beta) encountered.")
+    }
+
+    lambda_fit <- solve_current_lambda(
+      b_mat = b_mat,
+      lambda_start = lambda_current
+    )
+
+    if (is.null(lambda_fit) ||
+        is.null(lambda_fit$lambda) ||
+        any(!is.finite(lambda_fit$lambda))) {
+      stop("Lambda solver failed.")
+    }
+
+    lambda_current <- as.numeric(lambda_fit$lambda)
+    W <- as.numeric(lambda_fit$weights)
+
+    if (length(W) != length(I1)) {
+      stop("Length of calibration weights does not match complete cases.")
+    }
+    if (any(!is.finite(W))) {
+      stop("Non-finite calibration weights encountered.")
+    }
+
+    A_beta <- crossprod(Q, W * Q)
+    B_beta <- crossprod(Q, W * Y1)
+
+    theta_raw <- tryCatch(
+      as.numeric(solve(A_beta, B_beta)),
+      error = function(e) as.numeric(MASS::ginv(A_beta) %*% B_beta)
+    )
+
+    if (any(!is.finite(theta_raw))) {
+      stop("Non-finite theta update encountered.")
+    }
+
+    diff_theta <- max(abs(theta_raw - theta))
+    theta <- as.numeric((1 - damping) * theta + damping * theta_raw)
+
+    if (diff_theta < eps) {
+      break
+    }
+  }
+
+  converged <- is.finite(diff_theta) && diff_theta < eps
+
+  # Final synchronization at returned theta.
+  b_final <- get_b_A4(
+    beta = theta,
+    data_all = data_all,
+    b_method = b_method,
+    fold_id = direct_fold,
+    K = K
+  )
+
+  lambda_final_fit <- solve_current_lambda(
+    b_mat = b_final,
+    lambda_start = lambda_current
+  )
+
+  if (is.null(lambda_final_fit) ||
+      is.null(lambda_final_fit$lambda) ||
+      any(!is.finite(lambda_final_fit$lambda))) {
+    stop("Final lambda synchronization failed.")
+  }
+
+  W_final <- as.numeric(lambda_final_fit$weights)
+  weights_all_final <- as.numeric(lambda_final_fit$weights_all)
+
+  U_final <- missingcov_U(
+    beta = theta,
+    data_all = data_all
+  )
+
+  beta_score <- colMeans(
+    U_final * as.numeric(D * weights_all_final),
+    na.rm = TRUE
+  )
+
+  calibration_residual <- NA_real_
+  if (!is.null(lambda_final_fit$calibration_residual)) {
+    calibration_residual <- as.numeric(lambda_final_fit$calibration_residual)
+  } else if (!is.null(lambda_final_fit$residual)) {
+    calibration_residual <- as.numeric(lambda_final_fit$residual)
+  }
+
+  list(
+    theta = matrix(theta, ncol = 1),
+    beta = theta,
+    entropy = entropy,
+    b_method = b_method,
+    w = W_final,
+    weights_all = weights_all_final,
+    lambda = as.numeric(lambda_final_fit$lambda),
+    b_final = b_final,
+    data_all = data_all,
+    direct_fold = direct_fold,
+    converged = converged,
+    iterations = iter,
+    diff_theta = diff_theta,
+    beta_score = beta_score,
+    max_beta_score = max(abs(beta_score)),
+    calibration_residual = calibration_residual,
+    lambda_fit = lambda_final_fit
+  )
+}
+
+###############################################################################
+# 11. ET WRAPPER FOR A4
+###############################################################################
+
+estimate_ET_A4 <- function(
+    data_full,
+    b_method = c("plugin", "exact", "direct"),
+    K = 3,
+    seed = 1234,
+    beta_start = NULL,
+    max.iter = 100,
+    eps = 1e-6,
+    lambda_maxit = 1000,
+    lambda_tol = 1e-10,
+    damping = 1) {
+
+  b_method <- match.arg(b_method)
+  if (is.null(beta_start)) beta_start <- c(0, 0, 0)
+
+  fit <- estimate_theta_missingcov_GEC_A4_compare(
+    th = beta_start,
+    data_full = data_full,
+    K = K,
+    seed = seed,
+    entropy = "ET",
+    b_method = b_method,
+    max.iter = max.iter,
+    eps = eps,
+    lambda_maxit = lambda_maxit,
+    lambda_tol = lambda_tol,
+    damping = damping
+  )
+
+  list(
+    beta = as.numeric(fit$theta),
+    theta = fit$theta,
+    converged = fit$converged,
+    iterations = fit$iterations,
+    equation_residual = fit$max_beta_score,
+    weights = fit$w,
+    weights_all = fit$weights_all,
+    lambda = fit$lambda,
+    data_all = fit$data_all
+  )
+}
+
+###############################################################################
+# 12. MONTE CARLO STORAGE
+###############################################################################
+
+all_results <- list()
+row_counter <- 1L
+
+###############################################################################
+# 13. RUN A4 SIMULATION: AIPW + ET x 3 b-CONSTRUCTIONS
+###############################################################################
+
+for (s in seq_len(nrow(scenario_grid))) {
+  OR_now <- scenario_grid$OR[s]
+  PS_now <- scenario_grid$PS[s]
+  scenario_now <- scenario_grid$Scenario[s]
+
+  truth <- if (OR_now == 1) beta_true_OR1 else beta_true_OR2
+
+  cat("\n============================================\n")
+  cat("A4 scenario:", scenario_now, "\n")
+  cat("============================================\n")
+
+  for (m in seq_len(M)) {
+    if (m == 1 || m %% 50 == 0) {
+      cat("Replication", m, "of", M, "\n")
+    }
+
+    rep_seed <- seed + 10000 * s + m
+    set.seed(rep_seed)
+
+    dat <- generate_data(
+      n = n,
+      OR = OR_now,
+      PS = PS_now
+    )
+
+    # Shared prepared data for AIPW.
+    data_all <- tryCatch(
+      prepare_missingcov_data(
+        data_full = dat,
+        K = K,
+        seed = rep_seed
+      ),
+      error = function(e) NULL
+    )
+
+    if (is.null(data_all)) next
+
+    # Shared direct-score folds for AIPW methods.
+    direct_fold <- make_A4_fold_id(
+      data_all = data_all,
+      K = K,
+      seed = rep_seed + 50000
+    )
+
+    for (estimator_now in c("AIPW", "ET")) {
+      for (b_label_now in c("Plug-in", "Exact", "Direct-score")) {
+        b_method_now <- switch(
+          b_label_now,
+          "Plug-in" = "plugin",
+          "Exact" = "exact",
+          "Direct-score" = "direct"
+        )
+
+        if (estimator_now == "AIPW") {
+          fit <- tryCatch(
+            estimate_AIPW_A4(
+              data_all = data_all,
+              b_method = b_method_now,
+              fold_id = direct_fold,
+              K = K
+            ),
+            error = function(e) NULL
+          )
+        } else {
+          fit <- tryCatch(
+            estimate_ET_A4(
+              data_full = dat,
+              b_method = b_method_now,
+              K = K,
+              seed = rep_seed,
+              beta_start = NULL,
+              max.iter = 100,
+              eps = 1e-6,
+              lambda_maxit = 1000,
+              lambda_tol = 1e-10,
+              damping = 1
+            ),
+            error = function(e) NULL
+          )
+        }
+
+        if (is.null(fit)) next
+
+        beta_hat <- as.numeric(fit$beta)
+        if (length(beta_hat) != 3 || any(!is.finite(beta_hat))) next
+
+        for (j in seq_len(3)) {
+          all_results[[row_counter]] <- data.frame(
+            Scenario = scenario_now,
+            Replication = m,
+            Estimator = estimator_now,
+            B_Method = b_label_now,
+            Method = paste0(estimator_now, "-", b_label_now),
+            Parameter = parameter_names[j],
+            Estimate = beta_hat[j],
+            Truth = truth[j],
+            Error = beta_hat[j] - truth[j],
+            Squared_Error = (beta_hat[j] - truth[j])^2,
+            Converged = as.numeric(isTRUE(fit$converged)),
+            Equation_Residual = if (!is.null(fit$equation_residual)) {
+              as.numeric(fit$equation_residual)
+            } else {
+              NA_real_
+            },
+            stringsAsFactors = FALSE
+          )
+
+          row_counter <- row_counter + 1L
+        }
+      }
+    }
+  }
+}
+
+###############################################################################
+# 14. COMBINE RAW RESULTS
+###############################################################################
+
+A4_raw <- bind_rows(all_results)
+
+###############################################################################
+# 15. SUMMARIZE
+###############################################################################
+
+A4_summary <- A4_raw %>%
+  group_by(
+    Scenario,
+    Estimator,
+    B_Method,
+    Method,
+    Parameter
+  ) %>%
+  summarise(
+    N_success = n(),
+    Mean_Estimate = mean(Estimate, na.rm = TRUE),
+    Bias = mean(Error, na.rm = TRUE),
+    MC_SD = sd(Estimate, na.rm = TRUE),
+    RMSE = sqrt(mean(Squared_Error, na.rm = TRUE)),
+    Convergence_Rate = mean(Converged, na.rm = TRUE),
+    Mean_Equation_Residual = mean(Equation_Residual, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+###############################################################################
+# 16. RELATIVE EFFICIENCY WITHIN ESTIMATOR FAMILY
+###############################################################################
+
+plugin_ref <- A4_summary %>%
+  filter(B_Method == "Plug-in") %>%
+  select(
+    Scenario,
+    Estimator,
+    Parameter,
+    Plugin_MC_SD = MC_SD
+  )
+
+A4_summary <- A4_summary %>%
+  left_join(
+    plugin_ref,
+    by = c("Scenario", "Estimator", "Parameter")
+  ) %>%
+  mutate(
+    ARE_vs_Plugin = (Plugin_MC_SD / MC_SD)^2
+  )
+
+###############################################################################
+# 17. MANUSCRIPT TABLE x10
+###############################################################################
+
+A4_table <- A4_summary %>%
+  mutate(
+    Bias_x10 = 10 * Bias,
+    MC_SD_x10 = 10 * MC_SD,
+    RMSE_x10 = 10 * RMSE
+  ) %>%
+  select(
+    Scenario,
+    Estimator,
+    B_Method,
+    Method,
+    Parameter,
+    N_success,
+    Mean_Estimate,
+    Bias_x10,
+    MC_SD_x10,
+    RMSE_x10,
+    ARE_vs_Plugin,
+    Convergence_Rate,
+    Mean_Equation_Residual
+  ) %>%
+  arrange(
+    Scenario,
+    factor(Estimator, levels = c("AIPW", "ET")),
+    factor(B_Method, levels = c("Plug-in", "Exact", "Direct-score")),
+    Parameter
+  )
+
+print(A4_table, n = Inf)
+
+###############################################################################
+# 18. SAVE
+###############################################################################
+
+write.csv(
+  A4_raw,
+  "A4_AIPW_ET_b_comparison_raw.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  A4_summary,
+  "A4_AIPW_ET_b_comparison_summary.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  A4_table,
+  "A4_AIPW_ET_b_comparison_manuscript.csv",
+  row.names = FALSE
+)
+
+cat("\nA4 AIPW + ET comparison complete.\n")
+cat("Files saved:\n")
+cat("  A4_AIPW_ET_b_comparison_raw.csv\n")
+cat("  A4_AIPW_ET_b_comparison_summary.csv\n")
+cat("  A4_AIPW_ET_b_comparison_manuscript.csv\n")
