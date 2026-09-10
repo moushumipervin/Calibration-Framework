@@ -8100,3 +8100,284 @@ plot_4panel_boxplots <- function(
   
   (p1 | p2) / (p3 | p4)
 }
+
+
+###############################################################################
+# A6: SCORE-AUGMENTED GEC ATE ESTIMATOR
+#
+# Standard GEC balances:
+#   1, yhat_t, g(pi_t^{-1})
+#
+# A6 additionally balances the estimated propensity-score direction:
+#
+#   h_t(X) = pi_t(X) X
+#
+# for the arm-specific logistic response model.
+#
+# Treated arm:
+#   pi_1 = P(T=1|X)
+#   h_1  = pi_1 X
+#
+# Control arm:
+#   pi_0 = P(T=0|X) = 1-pi_1
+#   h_0  = pi_0 X
+#
+# Because solve_lambda_dual() already adds the intercept and g(pi^{-1}),
+# we append h to b_mat rather than changing solve_lambda_dual().
+###############################################################################
+
+estimate_ATE_dual_score_aug <- function(
+    fold_t1,
+    fold_t0,
+    entropy = "CE",
+    maxit = 1000
+) {
+
+  entropy <- match.arg(
+    entropy,
+    choices = c("SL", "EL", "ET", "HD", "CE")
+  )
+
+
+  ###########################################################################
+  # 1. Reconstruct cross-fitted datasets
+  ###########################################################################
+
+  dat1 <- do.call(
+    rbind,
+    fold_t1
+  )
+
+  dat0 <- do.call(
+    rbind,
+    fold_t0
+  )
+
+
+  # Keep subjects aligned
+  if ("ID" %in% names(dat1)) {
+    dat1 <- dat1[
+      order(dat1$ID),
+      ,
+      drop = FALSE
+    ]
+  }
+
+  if ("ID" %in% names(dat0)) {
+    dat0 <- dat0[
+      order(dat0$ID),
+      ,
+      drop = FALSE
+    ]
+  }
+
+
+  ###########################################################################
+  # 2. Covariates used in the PS model
+  ###########################################################################
+
+  xvars <- grep(
+    "^x\\d+$",
+    names(dat1),
+    value = TRUE
+  )
+
+  if (length(xvars) == 0) {
+    stop("No x1, ..., xp variables found.")
+  }
+
+
+  # Logistic PS design matrix INCLUDING intercept
+  X1 <- model.matrix(
+    reformulate(xvars),
+    data = dat1
+  )
+
+  X0 <- model.matrix(
+    reformulate(xvars),
+    data = dat0
+  )
+
+
+  ###########################################################################
+  # 3. Arm-specific response indicators and probabilities
+  ###########################################################################
+
+  D1 <- as.numeric(
+    dat1$D == 1
+  )
+
+  D0 <- as.numeric(
+    dat0$D == 0
+  )
+
+
+  p1 <- as.numeric(
+    dat1$pi.hat
+  )
+
+  p0 <- as.numeric(
+    1 - dat0$pi.hat
+  )
+
+
+  # Numerical protection
+  p1 <- pmin(
+    pmax(p1, 1e-8),
+    1 - 1e-8
+  )
+
+  p0 <- pmin(
+    pmax(p0, 1e-8),
+    1 - 1e-8
+  )
+
+
+  ###########################################################################
+  # 4. Propensity-score directions
+  #
+  # For logistic response probability p:
+  #
+  # h(O;phi)
+  # = [1/(1-p)] dp/dphi
+  # = p X
+  ###########################################################################
+
+  h1 <- X1 * p1
+
+  h0 <- X0 * p0
+
+
+  colnames(h1) <- paste0(
+    "h1_",
+    colnames(X1)
+  )
+
+  colnames(h0) <- paste0(
+    "h0_",
+    colnames(X0)
+  )
+
+
+  ###########################################################################
+  # 5. A6 balancing functions
+  #
+  # IMPORTANT:
+  # solve_lambda_dual() automatically adds:
+  #
+  #   intercept
+  #   g(pi^{-1})
+  #
+  # Therefore b_mat contains:
+  #
+  #   yhat + propensity-score directions
+  ###########################################################################
+
+  B1_aug <- cbind(
+    yhat = dat1$y.hat,
+    h1
+  )
+
+  B0_aug <- cbind(
+    yhat = dat0$y.hat,
+    h0
+  )
+
+
+  ###########################################################################
+  # 6. Solve calibration problem
+  ###########################################################################
+
+  fit1 <- solve_lambda_dual(
+    b_mat = B1_aug,
+    pi_hat = p1,
+    D = D1,
+    entropy = entropy,
+    maxit = maxit
+  )
+
+
+  fit0 <- solve_lambda_dual(
+    b_mat = B0_aug,
+    pi_hat = p0,
+    D = D0,
+    entropy = entropy,
+    maxit = maxit
+  )
+
+
+  ###########################################################################
+  # 7. Check for hard failure
+  ###########################################################################
+
+  if (
+    is.null(fit1$weights_all) ||
+    is.null(fit0$weights_all) ||
+    any(!is.finite(fit1$weights_all)) ||
+    any(!is.finite(fit0$weights_all))
+  ) {
+
+    return(
+      list(
+        ATE = NA_real_,
+        theta1 = NA_real_,
+        theta0 = NA_real_,
+        fit1 = fit1,
+        fit0 = fit0,
+        success = FALSE
+      )
+    )
+  }
+
+
+  ###########################################################################
+  # 8. Closed-form arm means and ATE
+  ###########################################################################
+
+  N1 <- nrow(dat1)
+  N0 <- nrow(dat0)
+
+
+  theta1_hat <- sum(
+    D1 *
+      fit1$weights_all *
+      dat1$y
+  ) / N1
+
+
+  theta0_hat <- sum(
+    D0 *
+      fit0$weights_all *
+      dat0$y
+  ) / N0
+
+
+  ATE_hat <-
+    theta1_hat -
+    theta0_hat
+
+
+  ###########################################################################
+  # 9. Return
+  ###########################################################################
+
+  list(
+    ATE = ATE_hat,
+
+    theta1 = theta1_hat,
+    theta0 = theta0_hat,
+
+    fit1 = fit1,
+    fit0 = fit0,
+
+    h1 = h1,
+    h0 = h0,
+
+    B1_aug = B1_aug,
+    B0_aug = B0_aug,
+
+    success =
+      isTRUE(fit1$converged) &&
+      isTRUE(fit0$converged)
+  )
+}
