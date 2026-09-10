@@ -8381,3 +8381,1163 @@ estimate_ATE_dual_score_aug <- function(
       isTRUE(fit0$converged)
   )
 }
+
+
+
+
+
+
+
+
+
+
+###############################################################################
+# A6: SCORE-AUGMENTED ET ESTIMATOR
+###############################################################################
+
+estimate_ATE_ET_score <- function(
+    fold_t1,
+    fold_t0,
+    maxit = 1000
+) {
+  
+  ###########################################################################
+  # 1. Reconstruct cross-fitted datasets
+  ###########################################################################
+  
+  dat1 <- do.call(
+    rbind,
+    fold_t1
+  )
+  
+  dat0 <- do.call(
+    rbind,
+    fold_t0
+  )
+  
+  dat1 <- dat1[
+    order(dat1$ID),
+    ,
+    drop = FALSE
+  ]
+  
+  dat0 <- dat0[
+    order(dat0$ID),
+    ,
+    drop = FALSE
+  ]
+  
+  
+  stopifnot(
+    identical(
+      as.integer(dat1$ID),
+      as.integer(dat0$ID)
+    )
+  )
+  
+  
+  ###########################################################################
+  # 2. Fit the SAME working propensity-score model
+  #
+  # D ~ x1 + x2 + x3 + x4
+  ###########################################################################
+  
+  xvars <- grep(
+    "^x\\d+$",
+    names(dat1),
+    value = TRUE
+  )
+  
+  ps_formula <- reformulate(
+    xvars,
+    response = "D"
+  )
+  
+  ps_fit <- glm(
+    ps_formula,
+    data = dat1,
+    family = binomial()
+  )
+  
+  X <- model.matrix(
+    ps_fit
+  )
+  
+  pi_hat <- as.numeric(
+    fitted(ps_fit)
+  )
+  
+  pi_hat <- pmin(
+    pmax(pi_hat, 1e-8),
+    1 - 1e-8
+  )
+  
+  
+  ###########################################################################
+  # 3. Treatment-arm quantities
+  ###########################################################################
+  
+  D1 <- as.numeric(
+    dat1$D == 1
+  )
+  
+  D0 <- as.numeric(
+    dat0$D == 0
+  )
+  
+  p1 <- pi_hat
+  
+  p0 <- 1 - pi_hat
+  
+  
+  ###########################################################################
+  # 4. Estimated propensity-score direction
+  #
+  # For logistic PS:
+  #
+  # h(O; phi)
+  # =
+  # 1/(1-pi) * d pi / d phi
+  # =
+  # pi X
+  #
+  # Therefore:
+  # treated arm: h1 = p1 X
+  # control arm: h0 = p0 X
+  ###########################################################################
+  
+  h1 <- X * p1
+  
+  h0 <- X * p0
+  
+  
+  colnames(h1) <- paste0(
+    "h1_",
+    colnames(X)
+  )
+  
+  colnames(h0) <- paste0(
+    "h0_",
+    colnames(X)
+  )
+  
+  
+  ###########################################################################
+  # 5. Augmented calibration functions
+  #
+  # solve_lambda_dual() automatically adds:
+  #
+  #   intercept
+  #   g(pi^{-1})
+  #
+  # So here we pass:
+  #
+  #   yhat + propensity-score directions
+  ###########################################################################
+  
+  B1_aug <- cbind(
+    yhat = as.numeric(dat1$y.hat),
+    h1
+  )
+  
+  B0_aug <- cbind(
+    yhat = as.numeric(dat0$y.hat),
+    h0
+  )
+  
+  storage.mode(B1_aug) <- "double"
+  
+  storage.mode(B0_aug) <- "double"
+  
+  
+  ###########################################################################
+  # 6. Solve ET calibration
+  ###########################################################################
+  
+  fit1 <- solve_lambda_dual(
+    b_mat = B1_aug,
+    pi_hat = p1,
+    D = D1,
+    entropy = "ET",
+    maxit = maxit
+  )
+  
+  
+  fit0 <- solve_lambda_dual(
+    b_mat = B0_aug,
+    pi_hat = p0,
+    D = D0,
+    entropy = "ET",
+    maxit = maxit
+  )
+  
+  
+  ###########################################################################
+  # 7. Hard-failure check
+  ###########################################################################
+  
+  if (
+    is.null(fit1$weights_all) ||
+    is.null(fit0$weights_all) ||
+    any(!is.finite(fit1$weights_all)) ||
+    any(!is.finite(fit0$weights_all))
+  ) {
+    
+    return(
+      list(
+        success = FALSE,
+        
+        ATE = NA_real_,
+        
+        theta1 = NA_real_,
+        theta0 = NA_real_,
+        
+        fit1 = fit1,
+        fit0 = fit0,
+        
+        ps_fit = ps_fit
+      )
+    )
+  }
+  
+  
+  ###########################################################################
+  # 8. Closed-form ATE
+  ###########################################################################
+  
+  N <- nrow(dat1)
+  
+  
+  theta1_hat <- sum(
+    D1 *
+      fit1$weights_all *
+      dat1$y
+  ) / N
+  
+  
+  theta0_hat <- sum(
+    D0 *
+      fit0$weights_all *
+      dat0$y
+  ) / N
+  
+  
+  ATE_hat <-
+    theta1_hat -
+    theta0_hat
+  
+  
+  ###########################################################################
+  # 9. Return
+  ###########################################################################
+  
+  list(
+    
+    success =
+      isTRUE(fit1$converged) &&
+      isTRUE(fit0$converged),
+    
+    ATE = ATE_hat,
+    
+    theta1 = theta1_hat,
+    
+    theta0 = theta0_hat,
+    
+    fit1 = fit1,
+    
+    fit0 = fit0,
+    
+    ps_fit = ps_fit,
+    
+    h1 = h1,
+    
+    h0 = h0,
+    
+    B1_aug = B1_aug,
+    
+    B0_aug = B0_aug
+  )
+}
+
+###############################################################################
+# A6: JOINT SANDWICH INFERENCE FOR SCORE-AUGMENTED ET
+###############################################################################
+
+ET_score_inference <- function(
+    dat,
+    yhat1,
+    yhat0,
+    fit_score,
+    true_ATE = NA_real_
+) {
+  
+  ###########################################################################
+  # 1. Align data
+  ###########################################################################
+  
+  dat <- dat[
+    order(dat$ID),
+    ,
+    drop = FALSE
+  ]
+  
+  y <- as.numeric(dat$y)
+  T <- as.numeric(dat$D)
+  
+  yhat1 <- as.numeric(yhat1)
+  yhat0 <- as.numeric(yhat0)
+  
+  N <- nrow(dat)
+  
+  
+  ###########################################################################
+  # 2. Propensity-score model
+  ###########################################################################
+  
+  ps_fit <- fit_score$ps_fit
+  
+  X <- model.matrix(ps_fit)
+  
+  storage.mode(X) <- "double"
+  
+  phi_hat <- as.numeric(
+    coef(ps_fit)
+  )
+  
+  r <- length(phi_hat)
+  
+  
+  ###########################################################################
+  # 3. Calibration parameters
+  ###########################################################################
+  
+  lambda1_hat <- as.numeric(
+    fit_score$fit1$lambda
+  )
+  
+  lambda0_hat <- as.numeric(
+    fit_score$fit0$lambda
+  )
+  
+  q1 <- length(lambda1_hat)
+  q0 <- length(lambda0_hat)
+  
+  
+  ###########################################################################
+  # 4. Full parameter vector
+  #
+  # beta =
+  # (phi, lambda1, theta1, lambda0, theta0)
+  ###########################################################################
+  
+  beta_hat <- c(
+    phi_hat,
+    lambda1_hat,
+    fit_score$theta1,
+    lambda0_hat,
+    fit_score$theta0
+  )
+  
+  
+  ###########################################################################
+  # 5. Parameter indices
+  ###########################################################################
+  
+  idx_phi <- seq_len(r)
+  
+  idx_lam1 <-
+    (r + 1):(r + q1)
+  
+  idx_theta1 <-
+    r + q1 + 1
+  
+  idx_lam0 <-
+    (idx_theta1 + 1):
+    (idx_theta1 + q0)
+  
+  idx_theta0 <-
+    idx_theta1 + q0 + 1
+  
+  
+  ###########################################################################
+  # 6. Observation-level estimating functions
+  ###########################################################################
+  
+  psi_fun <- function(beta) {
+    
+    phi <- beta[idx_phi]
+    
+    lambda1 <- beta[idx_lam1]
+    theta1 <- beta[idx_theta1]
+    
+    lambda0 <- beta[idx_lam0]
+    theta0 <- beta[idx_theta0]
+    
+    
+    #########################################################################
+    # Propensity score
+    #########################################################################
+    
+    pi <- plogis(
+      as.numeric(
+        X %*% phi
+      )
+    )
+    
+    pi <- pmin(
+      pmax(pi, 1e-8),
+      1 - 1e-8
+    )
+    
+    
+    p1 <- pi
+    p0 <- 1 - pi
+    
+    
+    #########################################################################
+    # Estimated PS directions
+    #
+    # Treated response model:
+    # h1 = pi X
+    #
+    # Control response model:
+    # using +p0 X gives the same calibration span as -p0 X.
+    # This matches estimate_ATE_ET_score().
+    #########################################################################
+    
+    h1 <- X * p1
+    
+    h0 <- X * p0
+    
+    
+    #########################################################################
+    # ET debiasing coordinates
+    #
+    # g(p^{-1}) = log(p^{-1})
+    #########################################################################
+    
+    g1 <- log(1 / p1)
+    
+    g0 <- log(1 / p0)
+    
+    
+    #########################################################################
+    # Score-augmented calibration vectors
+    #########################################################################
+    
+    S1 <- cbind(
+      intercept = 1,
+      yhat = yhat1,
+      h1,
+      g_pi = g1
+    )
+    
+    S0 <- cbind(
+      intercept = 1,
+      yhat = yhat0,
+      h0,
+      g_pi = g0
+    )
+    
+    storage.mode(S1) <- "double"
+    storage.mode(S0) <- "double"
+    
+    
+    #########################################################################
+    # ET weights
+    #
+    # omega(eta) = exp(eta)
+    #########################################################################
+    
+    eta1 <- as.numeric(
+      S1 %*% lambda1
+    )
+    
+    eta0 <- as.numeric(
+      S0 %*% lambda0
+    )
+    
+    
+    w1 <- exp(eta1)
+    
+    w0 <- exp(eta0)
+    
+    
+    D1 <- T
+    D0 <- 1 - T
+    
+    
+    #########################################################################
+    # PS estimating equation
+    #########################################################################
+    
+    Psi_phi <-
+      X *
+      as.numeric(
+        T - pi
+      )
+    
+    
+    #########################################################################
+    # Calibration estimating equations
+    #########################################################################
+    
+    Psi_lam1 <-
+      S1 *
+      as.numeric(
+        D1 * w1 - 1
+      )
+    
+    
+    Psi_lam0 <-
+      S0 *
+      as.numeric(
+        D0 * w0 - 1
+      )
+    
+    
+    #########################################################################
+    # Outcome equations
+    #########################################################################
+    
+    Psi_theta1 <-
+      D1 *
+      w1 *
+      (y - theta1)
+    
+    
+    Psi_theta0 <-
+      D0 *
+      w0 *
+      (y - theta0)
+    
+    
+    #########################################################################
+    # Stack all estimating equations
+    #########################################################################
+    
+    cbind(
+      Psi_phi,
+      Psi_lam1,
+      theta1 = Psi_theta1,
+      Psi_lam0,
+      theta0 = Psi_theta0
+    )
+  }
+  
+  
+  ###########################################################################
+  # 7. Evaluate estimating functions
+  ###########################################################################
+  
+  Psi_hat <- psi_fun(
+    beta_hat
+  )
+  
+  if (any(!is.finite(Psi_hat))) {
+    
+    return(
+      list(
+        success = FALSE,
+        ATE = fit_score$ATE,
+        SE = NA_real_,
+        coverage = NA_real_
+      )
+    )
+  }
+  
+  
+  ###########################################################################
+  # 8. Meat
+  ###########################################################################
+  
+  B <- crossprod(
+    Psi_hat
+  ) / N
+  
+  
+  ###########################################################################
+  # 9. Numerical Jacobian
+  ###########################################################################
+  
+  J <- tryCatch(
+    
+    numDeriv::jacobian(
+      
+      func = function(beta) {
+        
+        colMeans(
+          psi_fun(beta)
+        )
+      },
+      
+      x = beta_hat,
+      
+      method = "Richardson"
+    ),
+    
+    error = function(e) NULL
+  )
+  
+  
+  if (
+    is.null(J) ||
+    any(!is.finite(J))
+  ) {
+    
+    return(
+      list(
+        success = FALSE,
+        ATE = fit_score$ATE,
+        SE = NA_real_,
+        coverage = NA_real_
+      )
+    )
+  }
+  
+  
+  ###########################################################################
+  # Bread = negative Jacobian
+  ###########################################################################
+  
+  A <- -J
+  
+  
+  A_inv <- tryCatch(
+    solve(A),
+    error = function(e) NULL
+  )
+  
+  
+  if (
+    is.null(A_inv) ||
+    any(!is.finite(A_inv))
+  ) {
+    
+    return(
+      list(
+        success = FALSE,
+        ATE = fit_score$ATE,
+        SE = NA_real_,
+        coverage = NA_real_
+      )
+    )
+  }
+  
+  
+  ###########################################################################
+  # 10. Sandwich covariance
+  ###########################################################################
+  
+  V <- (
+    A_inv %*%
+      B %*%
+      t(A_inv)
+  ) / N
+  
+  
+  ###########################################################################
+  # 11. ATE contrast theta1 - theta0
+  ###########################################################################
+  
+  contrast <- rep(
+    0,
+    length(beta_hat)
+  )
+  
+  contrast[idx_theta1] <- 1
+  
+  contrast[idx_theta0] <- -1
+  
+  
+  var_ATE <- as.numeric(
+    t(contrast) %*%
+      V %*%
+      contrast
+  )
+  
+  
+  if (
+    !is.finite(var_ATE) ||
+    var_ATE < 0
+  ) {
+    
+    return(
+      list(
+        success = FALSE,
+        ATE = fit_score$ATE,
+        SE = NA_real_,
+        coverage = NA_real_
+      )
+    )
+  }
+  
+  
+  SE <- sqrt(var_ATE)
+  
+  ATE <- fit_score$ATE
+  
+  
+  ###########################################################################
+  # 12. 95% Wald CI
+  ###########################################################################
+  
+  lower <-
+    ATE -
+    qnorm(0.975) * SE
+  
+  upper <-
+    ATE +
+    qnorm(0.975) * SE
+  
+  
+  coverage <- if (
+    is.finite(true_ATE)
+  ) {
+    
+    as.integer(
+      lower <= true_ATE &&
+        true_ATE <= upper
+    )
+    
+  } else {
+    
+    NA_integer_
+  }
+  
+  
+  ###########################################################################
+  # 13. Weight diagnostics
+  ###########################################################################
+  
+  w1_obs <-
+    fit_score$fit1$weights_all[
+      T == 1
+    ]
+  
+  w0_obs <-
+    fit_score$fit0$weights_all[
+      T == 0
+    ]
+  
+  
+  ESS1 <-
+    sum(w1_obs)^2 /
+    sum(w1_obs^2)
+  
+  
+  ESS0 <-
+    sum(w0_obs)^2 /
+    sum(w0_obs^2)
+  
+  
+  ###########################################################################
+  # 14. Return
+  ###########################################################################
+  
+  list(
+    
+    success = TRUE,
+    
+    ATE = ATE,
+    
+    SE = SE,
+    
+    variance = var_ATE,
+    
+    lower = lower,
+    
+    upper = upper,
+    
+    coverage = coverage,
+    
+    ESS1 = ESS1,
+    
+    ESS0 = ESS0,
+    
+    max_weight1 =
+      max(w1_obs),
+    
+    max_weight0 =
+      max(w0_obs),
+    
+    A = A,
+    
+    B = B,
+    
+    V = V
+  )
+}
+
+###############################################################################
+# A6: ONE REPLICATION
+#
+# OR2PS1
+#
+# Compare:
+#   1. Estimated-PS AIPW-GAM
+#   2. Standard ET
+#   3. Score-augmented ET
+###############################################################################
+
+run_one_A6_ET <- function(
+    rep_id,
+    n = 1000,
+    p = 4,
+    K = 4
+) {
+  
+  true_ATE <- 10
+  
+  
+  ###########################################################################
+  # 1. Generate OR2PS1 data
+  ###########################################################################
+  
+  sim <- generate_ate_data(
+    n = n,
+    p = p,
+    outcome_model = 2,
+    ps_model = 1,
+    seed = rep_id + 20242022
+  )
+  
+  
+  dat <- sim$data
+  
+  
+  if (!"ID" %in% names(dat)) {
+    
+    dat$ID <-
+      seq_len(
+        nrow(dat)
+      )
+  }
+  
+  
+  D <- dat$D
+  
+  
+  ###########################################################################
+  # 2. GAM cross-fitting
+  ###########################################################################
+  
+  fold_T1 <- k_fold_function_gam(
+    df = dat,
+    K = K,
+    idx_S = which(D == 1),
+    idx_U0 = which(D == 0),
+    seed = rep_id + 20242022
+  )
+  
+  
+  fold_T0 <- k_fold_function_gam(
+    df = dat,
+    K = K,
+    idx_S = which(D == 0),
+    idx_U0 = which(D == 1),
+    seed = rep_id + 20242022
+  )
+  
+  
+  ###########################################################################
+  # Align prediction datasets
+  ###########################################################################
+  
+  dat1 <- do.call(
+    rbind,
+    fold_T1
+  )
+  
+  dat0 <- do.call(
+    rbind,
+    fold_T0
+  )
+  
+  
+  dat1 <- dat1[
+    order(dat1$ID),
+    ,
+    drop = FALSE
+  ]
+  
+  dat0 <- dat0[
+    order(dat0$ID),
+    ,
+    drop = FALSE
+  ]
+  
+  dat <- dat[
+    order(dat$ID),
+    ,
+    drop = FALSE
+  ]
+  
+  
+  yhat1 <-
+    as.numeric(
+      dat1$y.hat
+    )
+  
+  yhat0 <-
+    as.numeric(
+      dat0$y.hat
+    )
+  
+  
+  ###########################################################################
+  # 3. Estimated-propensity AIPW
+  ###########################################################################
+  
+  aipw <- tryCatch(
+    
+    estimate_aipw_inference(
+      fold_T1 = fold_T1,
+      fold_T0 = fold_T0,
+      true_ATE = true_ATE
+    ),
+    
+    error = function(e) {
+      
+      message(
+        "AIPW error rep ",
+        rep_id,
+        ": ",
+        e$message
+      )
+      
+      NULL
+    }
+  )
+  
+  
+  ###########################################################################
+  # 4. Standard ET point estimate
+  ###########################################################################
+  
+  ET_fit <- tryCatch(
+    
+    estimate_ATE_dual(
+      fold_t1 = fold_T1,
+      fold_t0 = fold_T0,
+      entropy = "ET"
+    ),
+    
+    error = function(e) {
+      
+      message(
+        "ET error rep ",
+        rep_id,
+        ": ",
+        e$message
+      )
+      
+      NULL
+    }
+  )
+  
+  
+  ###########################################################################
+  # Standard ET inference
+  ###########################################################################
+  
+  ET_inf <- NULL
+  
+  
+  if (
+    !is.null(ET_fit) &&
+    is.finite(ET_fit$ATE) &&
+    !is.null(ET_fit$fit1) &&
+    !is.null(ET_fit$fit0)
+  ) {
+    
+    xvars <- grep(
+      "^x\\d+$",
+      names(dat),
+      value = TRUE
+    )
+    
+    
+    ps_fit <- glm(
+      reformulate(
+        xvars,
+        response = "D"
+      ),
+      data = dat,
+      family = binomial()
+    )
+    
+    
+    ET_inf <- tryCatch(
+      
+      gec_ate_inference(
+        dat = dat,
+        yhat1 = yhat1,
+        yhat0 = yhat0,
+        fit1 = ET_fit$fit1,
+        fit0 = ET_fit$fit0,
+        ps_fit = ps_fit,
+        entropy = "ET",
+        true_ATE = true_ATE,
+        numerical_jacobian = FALSE
+      ),
+      
+      error = function(e) {
+        
+        message(
+          "ET inference error rep ",
+          rep_id,
+          ": ",
+          e$message
+        )
+        
+        NULL
+      }
+    )
+  }
+  
+  
+  ###########################################################################
+  # 5. Score-augmented ET
+  ###########################################################################
+  
+  ET_score_fit <- tryCatch(
+    
+    estimate_ATE_ET_score(
+      fold_t1 = fold_T1,
+      fold_t0 = fold_T0
+    ),
+    
+    error = function(e) {
+      
+      message(
+        "ET-score error rep ",
+        rep_id,
+        ": ",
+        e$message
+      )
+      
+      NULL
+    }
+  )
+  
+  
+  ###########################################################################
+  # ET + score inference
+  ###########################################################################
+  
+  ET_score_inf <- NULL
+  
+  
+  if (
+    !is.null(ET_score_fit) &&
+    isTRUE(ET_score_fit$success)
+  ) {
+    
+    ET_score_inf <- tryCatch(
+      
+      ET_score_inference(
+        dat = dat,
+        yhat1 = yhat1,
+        yhat0 = yhat0,
+        fit_score = ET_score_fit,
+        true_ATE = true_ATE
+      ),
+      
+      error = function(e) {
+        
+        message(
+          "ET-score inference error rep ",
+          rep_id,
+          ": ",
+          e$message
+        )
+        
+        NULL
+      }
+    )
+  }
+  
+  
+  ###########################################################################
+  # 6. Return one row
+  ###########################################################################
+  
+  data.frame(
+    
+    replication = rep_id,
+    
+    
+    # AIPW
+    AIPW =
+      if (!is.null(aipw))
+        aipw$ATE
+    else NA_real_,
+    
+    AIPW_SE =
+      if (!is.null(aipw))
+        aipw$SE
+    else NA_real_,
+    
+    AIPW_COV =
+      if (!is.null(aipw))
+        aipw$coverage
+    else NA_real_,
+    
+    
+    # Standard ET
+    ET =
+      if (!is.null(ET_inf))
+        ET_inf$ATE
+    else if (!is.null(ET_fit))
+      ET_fit$ATE
+    else NA_real_,
+    
+    ET_SE =
+      if (!is.null(ET_inf))
+        ET_inf$SE_analytic
+    else NA_real_,
+    
+    ET_COV =
+      if (!is.null(ET_inf))
+        ET_inf$cover_analytic
+    else NA_real_,
+    
+    
+    # ET + PS score
+    ET_SCORE =
+      if (!is.null(ET_score_inf))
+        ET_score_inf$ATE
+    else if (!is.null(ET_score_fit))
+      ET_score_fit$ATE
+    else NA_real_,
+    
+    ET_SCORE_SE =
+      if (!is.null(ET_score_inf))
+        ET_score_inf$SE
+    else NA_real_,
+    
+    ET_SCORE_COV =
+      if (!is.null(ET_score_inf))
+        ET_score_inf$coverage
+    else NA_real_,
+    
+    
+    ET_SUCCESS =
+      as.integer(
+        !is.null(ET_fit) &&
+          isTRUE(ET_fit$fit1$converged) &&
+          isTRUE(ET_fit$fit0$converged)
+      ),
+    
+    
+    ET_SCORE_SUCCESS =
+      as.integer(
+        !is.null(ET_score_inf) &&
+          isTRUE(ET_score_inf$success)
+      ),
+    
+    stringsAsFactors = FALSE
+  )
+}
+
