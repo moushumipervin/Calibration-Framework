@@ -2162,117 +2162,135 @@ estimate_ipw_inference <- function(
     dat,
     true_ATE = NA_real_
 ) {
+
+  # ------------------------------------------------------------
+  # 1. Propensity-score model
+  # ------------------------------------------------------------
+
   xvars <- grep("^x\\d+$", names(dat), value = TRUE)
-ps_formula <- as.formula(
+
+  ps_formula <- as.formula(
     paste(
       "D ~",
       paste(xvars, collapse = " + ")
     )
   )
-  
+
   ps_fit <- glm(
     ps_formula,
     data = dat,
     family = binomial()
   )
 
+  X <- model.matrix(ps_fit)
+
+  phi_hat <- as.numeric(coef(ps_fit))
+
   pi_hat <- pmin(
     pmax(fitted(ps_fit), 1e-8),
     1 - 1e-8
   )
 
-  D <- as.numeric(dat$D)
   y <- as.numeric(dat$y)
-  n <- nrow(dat)
-
-  ate_hat <- mean(
-    D * y / pi_hat -
-      (1 - D) * y / (1 - pi_hat)
-  )
-  
-  
-  X <- model.matrix(ps_fit)
-  
-  phi_hat <- coef(ps_fit)
-  
-  y <- dat$y
-  D <- dat$D
+  D <- as.numeric(dat$D)
   N <- nrow(dat)
-  
 
-  
-  # --------------------------------------------------------------
-  # Joint parameter:
-  # beta = (phi, mu1, mu0)
-  # --------------------------------------------------------------
-  
-  beta_hat <- c(
+
+  # ------------------------------------------------------------
+  # 2. Standard HT-style IPW means
+  # ------------------------------------------------------------
+
+  mu1_hat <- mean(
+    D * y / pi_hat
+  )
+
+  mu0_hat <- mean(
+    (1 - D) * y / (1 - pi_hat)
+  )
+
+  ate_hat <- mu1_hat - mu0_hat
+
+
+  # ------------------------------------------------------------
+  # 3. Joint parameter
+  # theta = (phi, mu1, mu0)
+  # ------------------------------------------------------------
+
+  theta_hat <- c(
     phi_hat,
     mu1_hat,
     mu0_hat
   )
-  
+
   r <- ncol(X)
-  
-  
-  psi_fun <- function(beta) {
-    
-    phi <- beta[seq_len(r)]
-    
-    mu1 <- beta[r + 1]
-    mu0 <- beta[r + 2]
-    
+
+
+  # ------------------------------------------------------------
+  # 4. Observation-level estimating equations
+  # ------------------------------------------------------------
+
+  psi_fun <- function(theta) {
+
+    phi <- theta[seq_len(r)]
+
+    mu1 <- theta[r + 1]
+    mu0 <- theta[r + 2]
+
     pi <- plogis(
       as.vector(X %*% phi)
     )
-    
+
     pi <- pmin(
       pmax(pi, 1e-8),
       1 - 1e-8
     )
-    
+
+    # propensity-score score
     Psi_phi <-
       X * as.numeric(D - pi)
-    
+
+    # HT IPW mean equations
     Psi_mu1 <-
-      D / pi *
-      (y - mu1)
-    
+      D * y / pi - mu1
+
     Psi_mu0 <-
-      (1 - D) / (1 - pi) *
-      (y - mu0)
-    
+      (1 - D) * y / (1 - pi) - mu0
+
     cbind(
       Psi_phi,
       mu1 = Psi_mu1,
       mu0 = Psi_mu0
     )
   }
-  
-  
-  Psi_hat <- psi_fun(beta_hat)
-  
+
+
+  # ------------------------------------------------------------
+  # 5. Sandwich variance
+  # ------------------------------------------------------------
+
+  Psi_hat <- psi_fun(theta_hat)
+
   B <- crossprod(Psi_hat) / N
-  
-  
+
   J <- numDeriv::jacobian(
-    func = function(beta) {
+    func = function(theta) {
       colMeans(
-        psi_fun(beta)
+        psi_fun(theta)
       )
     },
-    x = beta_hat
+    x = theta_hat
   )
-  
+
   A <- -J
-  
+
   A_inv <- tryCatch(
     solve(A),
     error = function(e) NULL
   )
-  
-  if (is.null(A_inv)) {
-    
+
+  if (is.null(A_inv) ||
+      any(!is.finite(A_inv))) {
+
     return(
       list(
         ATE = ate_hat,
@@ -2286,92 +2304,108 @@ ps_formula <- as.formula(
       )
     )
   }
-  
-  
+
   V <- (
     A_inv %*%
       B %*%
       t(A_inv)
   ) / N
-  
-  
+
+
+  # ------------------------------------------------------------
+  # 6. ATE = mu1 - mu0
+  # ------------------------------------------------------------
+
   contrast <- rep(
     0,
-    length(beta_hat)
+    length(theta_hat)
   )
-  
+
   contrast[r + 1] <- 1
   contrast[r + 2] <- -1
-  
+
   var_ate <- as.numeric(
     t(contrast) %*%
       V %*%
       contrast
   )
-  
-  se_ate <- sqrt(
-    max(var_ate, 0)
-  )
-  
-  
-  # --------------------------------------------------------------
-  # Coverage
-  # --------------------------------------------------------------
-  
-  coverage <- if (is.finite(true_ATE)) {
-    
+
+  se_ate <- if (
+    is.finite(var_ate) &&
+    var_ate >= 0
+  ) {
+    sqrt(var_ate)
+  } else {
+    NA_real_
+  }
+
+
+  # ------------------------------------------------------------
+  # 7. Coverage
+  # ------------------------------------------------------------
+
+  coverage <- if (
+    is.finite(true_ATE) &&
+    is.finite(se_ate)
+  ) {
+
     lower <-
       ate_hat -
-      qnorm(.975) * se_ate
-    
+      qnorm(0.975) * se_ate
+
     upper <-
       ate_hat +
-      qnorm(.975) * se_ate
-    
+      qnorm(0.975) * se_ate
+
     as.numeric(
       lower <= true_ATE &&
         true_ATE <= upper
     )
-    
+
   } else {
-    
+
     NA_real_
   }
-  
-  
-  # --------------------------------------------------------------
-  # Weight diagnostics
-  # --------------------------------------------------------------
-  
+
+
+  # ------------------------------------------------------------
+  # 8. Weight diagnostics
+  # ------------------------------------------------------------
+
   w1 <- 1 / pi_hat[D == 1]
-  
+
   w0 <- 1 / (1 - pi_hat[D == 0])
-  
+
   ESS1 <-
     sum(w1)^2 /
     sum(w1^2)
-  
+
   ESS0 <-
     sum(w0)^2 /
     sum(w0^2)
-  
-  
+
+
+  # ------------------------------------------------------------
+  # 9. Return
+  # ------------------------------------------------------------
+
   list(
     ATE = ate_hat,
     SE = se_ate,
     coverage = coverage,
-    
+
     ESS1 = ESS1,
     ESS0 = ESS0,
-    
+
     max_weight1 = max(w1),
     max_weight0 = max(w0),
-    
-    success = TRUE
+
+    pi_hat = pi_hat,
+    phi_hat = phi_hat,
+
+    success = is.finite(se_ate)
   )
 }
-
-
 
 
 ###############################################################################
