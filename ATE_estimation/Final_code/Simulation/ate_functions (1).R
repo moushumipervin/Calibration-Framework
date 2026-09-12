@@ -2162,14 +2162,8 @@ estimate_ipw_inference <- function(
     dat,
     true_ATE = NA_real_
 ) {
-  
-  xvars <- grep(
-    "^x\\d+$",
-    names(dat),
-    value = TRUE
-  )
-  
-  ps_formula <- as.formula(
+  xvars <- grep("^x\\d+$", names(dat), value = TRUE)
+ps_formula <- as.formula(
     paste(
       "D ~",
       paste(xvars, collapse = " + ")
@@ -2181,37 +2175,31 @@ estimate_ipw_inference <- function(
     data = dat,
     family = binomial()
   )
+
+  pi_hat <- pmin(
+    pmax(fitted(ps_fit), 1e-8),
+    1 - 1e-8
+  )
+
+  D <- as.numeric(dat$D)
+  y <- as.numeric(dat$y)
+  n <- nrow(dat)
+
+  ate_hat <- mean(
+    D * y / pi_hat -
+      (1 - D) * y / (1 - pi_hat)
+  )
+  
   
   X <- model.matrix(ps_fit)
   
   phi_hat <- coef(ps_fit)
   
-  pi_hat <- fitted(ps_fit)
-  
-  pi_hat <- pmin(
-    pmax(pi_hat, 1e-8),
-    1 - 1e-8
-  )
-  
   y <- dat$y
   D <- dat$D
   N <- nrow(dat)
   
-  
-  # --------------------------------------------------------------
-  # Normalized IPW / Hajek means
-  # --------------------------------------------------------------
-  
-  mu1_hat <-
-    sum(D * y / pi_hat) /
-    sum(D / pi_hat)
-  
-  mu0_hat <-
-    sum((1 - D) * y / (1 - pi_hat)) /
-    sum((1 - D) / (1 - pi_hat))
-  
-  ate_hat <- mu1_hat - mu0_hat
-  
+
   
   # --------------------------------------------------------------
   # Joint parameter:
