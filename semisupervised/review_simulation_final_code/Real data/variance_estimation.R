@@ -2848,7 +2848,7 @@ run_one_split <- function(split_seed) {
     S1 <- summary(model.fit)$coefficients
     
     SUP_est <- as.numeric(S1[, "Estimate"])
-    SUP_se  <- as.numeric(S1[, "Std. Error"])
+    SUP_se  <-sqrt(diag(vcovHC(model.fit, type = "HC0")))
     
     SUP_lower <- SUP_est - 1.96 * SUP_se
     SUP_upper <- SUP_est + 1.96 * SUP_se
