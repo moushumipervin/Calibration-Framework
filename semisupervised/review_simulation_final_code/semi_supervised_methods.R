@@ -612,7 +612,7 @@ DRESS<- function(labelled_data,unlabelled_data,type="linear",tau=0.5,L,sd,Kfolds
   
   n=nrow(labelled_data)
   p=ncol(labelled_data)-1
-  N=nrow(labelled_data)
+  N=nrow(unlabelled_data)
   
   
   base_labelled<- polynomial(labelled_data[,-1],L)
