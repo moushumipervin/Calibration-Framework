@@ -769,3 +769,298 @@ write.csv(
   "NHANES_Final_Main_Paper_Table.csv",
   row.names = FALSE
 )
+
+
+
+
+
+
+
+####################single run table#######################
+###############################################################################
+# SINGLE RUN ONLY
+# Same seed as before: 123 + 1 = 124
+###############################################################################
+
+library(dplyr)
+library(tidyr)
+
+single_seed <- 124
+
+
+###############################################################################
+# 1. RUN ONE SPLIT
+###############################################################################
+
+single_result <- run_one_split(
+  split_seed = single_seed
+)
+
+
+###############################################################################
+# 2. CHECK RAW RESULTS
+###############################################################################
+
+print(
+  single_result,
+  n = Inf,
+  width = Inf
+)
+
+cat(
+  "\nMethods returned:\n"
+)
+
+print(
+  unique(single_result$method)
+)
+
+
+###############################################################################
+# 3. METHOD ORDER
+###############################################################################
+
+method_order <- c(
+  "Supervised",
+  "DRESS",
+  "PSSE",
+  "ET",
+  "HD",
+  "CE"
+)
+
+
+###############################################################################
+# 4. KEEP METHODS NEEDED FOR THE TABLE
+###############################################################################
+
+single_result <- single_result %>%
+  
+  dplyr::filter(
+    method %in% method_order
+  )
+
+
+###############################################################################
+# 5. GET SUPERVISED VARIANCE
+#
+# Used as denominator/reference for ARE:
+#
+# ARE = Var(Supervised) / Var(Method)
+###############################################################################
+
+sup_reference <- single_result %>%
+  
+  dplyr::filter(
+    method == "Supervised"
+  ) %>%
+  
+  dplyr::transmute(
+    parameter,
+    SUP_var = analytic_se^2
+  )
+
+
+###############################################################################
+# 6. CREATE PARAMETER-LEVEL SUMMARY
+###############################################################################
+
+Single_run_summary <- single_result %>%
+  
+  dplyr::left_join(
+    sup_reference,
+    by = "parameter"
+  ) %>%
+  
+  dplyr::mutate(
+    
+    ARE =
+      SUP_var /
+      (analytic_se^2),
+    
+    method = factor(
+      method,
+      levels = method_order
+    ),
+    
+    parameter = factor(
+      parameter,
+      levels = parameter_names
+    )
+  ) %>%
+  
+  dplyr::arrange(
+    method,
+    parameter
+  ) %>%
+  
+  dplyr::select(
+    method,
+    parameter,
+    benchmark,
+    estimate,
+    analytic_se,
+    ci_width,
+    ARE
+  )
+
+
+###############################################################################
+# 7. LOOK AT PARAMETER-LEVEL RESULTS
+###############################################################################
+
+###############################################################################
+# 8. FULL-DATA BENCHMARK ROW
+###############################################################################
+
+benchmark_row <- Single_run_summary %>%
+  
+  dplyr::select(
+    parameter,
+    benchmark
+  ) %>%
+  
+  dplyr::distinct() %>%
+  
+  dplyr::mutate(
+    parameter = factor(
+      parameter,
+      levels = parameter_names
+    )
+  ) %>%
+  
+  dplyr::arrange(
+    parameter
+  ) %>%
+  
+  tidyr::pivot_wider(
+    names_from = parameter,
+    values_from = benchmark
+  ) %>%
+  
+  dplyr::mutate(
+    Method = "",
+    Statistic = "Full-data benchmark",
+    .before = 1
+  )
+
+
+###############################################################################
+# 9. EST / SE / CIW / ARE ROWS
+###############################################################################
+
+method_rows <- Single_run_summary %>%
+  
+  dplyr::select(
+    method,
+    parameter,
+    estimate,
+    analytic_se,
+    ci_width,
+    ARE
+  ) %>%
+  
+  tidyr::pivot_longer(
+    
+    cols = c(
+      estimate,
+      analytic_se,
+      ci_width,
+      ARE
+    ),
+    
+    names_to = "Statistic",
+    values_to = "Value"
+  ) %>%
+  
+  dplyr::mutate(
+    
+    Statistic = dplyr::recode(
+      Statistic,
+      estimate = "Est",
+      analytic_se = "SE",
+      ci_width = "CIW",
+      ARE = "ARE"
+    ),
+    
+    Statistic = factor(
+      Statistic,
+      levels = c(
+        "Est",
+        "SE",
+        "CIW",
+        "ARE"
+      )
+    ),
+    
+    method = factor(
+      method,
+      levels = method_order
+    ),
+    
+    parameter = factor(
+      parameter,
+      levels = parameter_names
+    )
+  ) %>%
+  
+  dplyr::arrange(
+    method,
+    Statistic,
+    parameter
+  ) %>%
+  
+  tidyr::pivot_wider(
+    names_from = parameter,
+    values_from = Value
+  ) %>%
+  
+  dplyr::rename(
+    Method = method
+  )
+
+
+###############################################################################
+# 10. COMBINE BENCHMARK + METHODS
+###############################################################################
+
+Final_single_run_table <- dplyr::bind_rows(
+  benchmark_row,
+  method_rows
+)
+
+
+###############################################################################
+# 11. ROUND TO TWO DECIMALS
+###############################################################################
+
+Final_single_run_table_rounded <- Final_single_run_table %>%
+  
+  dplyr::mutate(
+    
+    dplyr::across(
+      -c(Method, Statistic),
+      ~ round(.x, 2)
+    )
+  )
+
+
+###############################################################################
+# 12. PRINT FINAL TABLE
+###############################################################################
+
+print(
+  Final_single_run_table_rounded
+)
+
+
+###############################################################################
+# 13. CONFIRM SEED
+###############################################################################
+
+cat(
+  "\nSingle-run seed:",
+  single_seed,
+  "\n"
+)
+
