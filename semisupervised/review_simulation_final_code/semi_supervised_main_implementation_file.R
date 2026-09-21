@@ -24,7 +24,7 @@ library(tidyr)
 library(purrr)
 library(ggplot2)
 library(ggh4x)
-
+library(sandwich)
 ################################################################################
 # 2. Working directory and source files
 ################################################################################
@@ -207,13 +207,7 @@ for (k in seq_len(rep)) {
     
     # If SupervisedEst does not return SE,
     # use standard OLS SE from the labeled fit.
-    sup_se <-
-      as.numeric(
-        summary(fit_initial)$coefficients[
-          ,
-          "Std. Error"
-        ]
-      )
+    sup_se <- sqrt(diag(vcovHC(   fit_initial, type = "HC0")))
     
     one_rep[["Supervised"]] <-
       make_simulation_rows(
