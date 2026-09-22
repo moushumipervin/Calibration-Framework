@@ -827,9 +827,9 @@ estimate_theta_EM_kfold_dual_ET <- function(
     
     if (iter >= max.iter) {
       
-      message(
-        "Maximum iterations reached."
-      )
+     # message(
+      #  "Maximum iterations reached."
+      #)
       
       return(
         list(
@@ -1450,9 +1450,9 @@ estimate_theta_EM_kfold_CE <- function(
     
     if (iter >= max.iter) {
       
-      message(
-        "Maximum outer iterations reached."
-      )
+      #message(
+      #  "Maximum outer iterations reached."
+      #)
       
       
       y <- data_all$Y[I1]
@@ -2123,9 +2123,9 @@ estimate_theta_EM_kfold_dual_HD <- function(
     
     if (iter >= max.iter) {
       
-      message(
-        "Maximum outer iterations reached."
-      )
+      #message(
+      #  "Maximum outer iterations reached."
+      #)
       
       
       y <- data_all$Y[I1]
@@ -2722,7 +2722,7 @@ gec_IF_variance <- function(
 
 
 
-run_one_split <- function(split_seed) {
+run_one_split <- function(split_seed,datX) {
   
   tryCatch({
     
@@ -2732,14 +2732,23 @@ run_one_split <- function(split_seed) {
     
     set.seed(split_seed)
     
+    original_labeled <- datX %>%
+      dplyr::filter(!is.na(Y))
     
-    labeled <- datX %>%
-      filter(!is.na(Y)) %>%
-      slice_sample(prop = 0.5)
+    original_unlabeled <- datX %>%
+      dplyr::filter(is.na(Y))
     
+    labeled <- original_labeled %>%
+      dplyr::slice_sample(prop = 0.5)
     
-    unlabeled <- datX %>%
-      filter(is.na(Y))
+    hidden_labeled <- original_labeled %>%
+      dplyr::filter(!SEQN %in% labeled$SEQN) %>%
+      dplyr::mutate(Y = NA_real_)
+    
+    unlabeled <- dplyr::bind_rows(
+      original_unlabeled,
+      hidden_labeled
+    )
     ###############################################################################
     # A7 CHECK 1: NHANES sample counts
     #
@@ -2760,7 +2769,7 @@ run_one_split <- function(split_seed) {
       )
     }
     
-    if (nrow(unlabeled) != 3697) {
+    if (nrow(unlabeled) != 4964) {
       stop(
         paste0(
           "A7 count check failed: original unlabeled n = ",
@@ -2770,7 +2779,7 @@ run_one_split <- function(split_seed) {
       )
     }
     
-    if (nrow(labeled) + nrow(unlabeled) != 4963) {
+    if (nrow(labeled) + nrow(unlabeled) != 6230) {
       stop(
         paste0(
           "A7 total sample check failed: N = ",
@@ -2848,8 +2857,8 @@ run_one_split <- function(split_seed) {
     S1 <- summary(model.fit)$coefficients
     
     SUP_est <- as.numeric(S1[, "Estimate"])
+    #SUP_se  <- as.numeric(S1[, "Std. Error"])
     SUP_se  <-sqrt(diag(vcovHC(model.fit, type = "HC0")))
-    
     SUP_lower <- SUP_est - 1.96 * SUP_se
     SUP_upper <- SUP_est + 1.96 * SUP_se
     SUP_width <- SUP_upper - SUP_lower
