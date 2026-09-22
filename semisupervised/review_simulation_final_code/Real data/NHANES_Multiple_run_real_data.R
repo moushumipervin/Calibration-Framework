@@ -180,6 +180,7 @@ print(theta_full)
 
 
 
+
 ###############################################################################
 # 2. FUNCTION FOR ONE RANDOM SPLIT
 ###############################################################################
@@ -220,7 +221,7 @@ for (b in seq_len(B)) {
   all_results[[b]] <-
     run_one_split(
       split_seed =
-       123+b
+       123+b, datX = datX
     )
 }
 
@@ -235,11 +236,6 @@ results_1000 <- bind_rows(
 )
 
 
-cat(
-  "\nNumber of successful split-method results:",
-  nrow(results_200),
-  "\n"
-)
 
 library(dplyr)
 library(tidyr)
@@ -766,11 +762,9 @@ Final_table_rounded <- Final_table %>%
 
 write.csv(
   Final_table_rounded,
-  "NHANES_Final_Main_Paper_Table.csv",
+  "NHANES_Final_Main_Paper_Table_revised.csv",
   row.names = FALSE
 )
-
-
 
 
 
@@ -793,7 +787,7 @@ single_seed <- 124
 ###############################################################################
 
 single_result <- run_one_split(
-  split_seed = single_seed
+  split_seed = single_seed, datX=datX
 )
 
 
@@ -802,9 +796,7 @@ single_result <- run_one_split(
 ###############################################################################
 
 print(
-  single_result,
-  n = Inf,
-  width = Inf
+  single_result
 )
 
 cat(
@@ -1054,13 +1046,10 @@ print(
 )
 
 
-###############################################################################
-# 13. CONFIRM SEED
-###############################################################################
-
-cat(
-  "\nSingle-run seed:",
-  single_seed,
-  "\n"
+write.csv(
+  Final_single_run_table_rounded,
+  file = "NHANES_Single_Run_Main_Table_final.csv",
+  row.names = FALSE
 )
+
 
