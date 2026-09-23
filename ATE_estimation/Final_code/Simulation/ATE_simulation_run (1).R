@@ -38,7 +38,6 @@ results_clean <- lapply(
   function(x) x
 )
 
-
 summary_table <- make_table(
   results_clean,
   methods = c(
@@ -56,13 +55,21 @@ summary_table <- make_table(
 )
 
 summary_table
+
+
+# ============================================================
+# Main table
+# ============================================================
+
 final_table <- summary_table |>
   dplyr::select(
     Scenario,
     Method,
     Bias,
+    SD = MC_SD,
     RMSE,
     Coverage = Coverage_Analytic,
+    Failures = N_Failure,
     ESS1 = Mean_ESS_Treated,
     ESS0 = Mean_ESS_Control,
     MaxW1 = Mean_MaxW_Treated,
@@ -70,8 +77,10 @@ final_table <- summary_table |>
   ) |>
   dplyr::mutate(
     Bias = round(Bias, 4),
+    SD = round(SD, 4),
     RMSE = round(RMSE, 4),
     Coverage = round(Coverage, 3),
+    Failures = as.integer(Failures),
     ESS1 = round(ESS1, 1),
     ESS0 = round(ESS0, 1),
     MaxW1 = round(MaxW1, 2),
@@ -109,6 +118,12 @@ final_table <- summary_table |>
   )
 
 final_table
+
+
+# ============================================================
+# Full table
+# ============================================================
+
 final_table_full <- summary_table |>
   dplyr::select(
     Scenario,
@@ -119,6 +134,7 @@ final_table_full <- summary_table |>
     SE_Ratio = SEratio_Analytic_MC,
     RMSE,
     Coverage = Coverage_Analytic,
+    Failures = N_Failure,
     ESS1 = Mean_ESS_Treated,
     ESS0 = Mean_ESS_Control,
     MaxW1 = Mean_MaxW_Treated,
@@ -131,6 +147,7 @@ final_table_full <- summary_table |>
     SE_Ratio = round(SE_Ratio, 3),
     RMSE = round(RMSE, 4),
     Coverage = round(Coverage, 3),
+    Failures = as.integer(Failures),
     ESS1 = round(ESS1, 1),
     ESS0 = round(ESS0, 1),
     MaxW1 = round(MaxW1, 2),
@@ -150,6 +167,16 @@ final_table_full <- summary_table |>
         "HD",
         "CE"
       )
+    ),
+    
+    Scenario = factor(
+      Scenario,
+      levels = c(
+        "OR1PS1",
+        "OR1PS2",
+        "OR2PS1",
+        "OR2PS2"
+      )
     )
   ) |>
   dplyr::arrange(
@@ -157,6 +184,7 @@ final_table_full <- summary_table |>
     Method
   )
 
+final_table_full
 
 
 true_ates <- c(
@@ -173,24 +201,6 @@ true_ates <- c(
 # -------------------------------
 # Final 2x2 boxplot
 # -------------------------------
-plot_results <- lapply(
-  results_clean,
-  function(x) {
-    x[, c(
-      "IPW",
-      "EBPS",
-      "oCBPS",
-      "CBPS",
-      "EBCW",
-      "AIPW_LM",
-      "AIPW_GAM",
-      "ET",
-      "HD",
-      "CE"
-    ), drop = FALSE]
-  }
-)
-
 plot_all <- plot_4panel_boxplots(plot_results)
 
 
