@@ -71,14 +71,14 @@ generate_ate_data <- function(n , p , outcome_model , ps_model ,
                               seed = NULL) {
   if (!is.null(seed)) set.seed(seed)
   stopifnot(p == 4)
-
+  
   Z <- matrix(rnorm(n * p), nrow = n, ncol = p)
   colnames(Z) <- paste0("x", seq_len(p))
-
+  
   eta <- rnorm(n)
   alpha1 <- rep(1, p)
   alpha2 <- rep(1, p)
-
+  
   if (outcome_model == 1) {
     beta1 <- rep(0.5, p)
     y1 <- 1 + as.numeric(Z %*% beta1) + rnorm(n)
@@ -91,7 +91,7 @@ generate_ate_data <- function(n , p , outcome_model , ps_model ,
     y0 <-      as.numeric(Z %*% alpha1) + 0.5 * as.numeric(Zt %*% alpha2) + eta
     true_ate <- 10
   }
-
+  
   if (ps_model == 1) {
     px <- plogis(
       -(0.25 +
@@ -111,10 +111,10 @@ generate_ate_data <- function(n , p , outcome_model , ps_model ,
   
   D <- rbinom(n, size = 1, prob = px)
   y <- D * y1 + (1 - D) * y0
-
+  
   dat <- data.frame(y = y, Z, D = D)
   dat$pi.hat <- fitted(glm(D ~ ., data = dat[, c(paste0("x", 1:p), "D")], family = binomial()))
-
+  
   list(
     data = dat,
     true_ate = true_ate,
@@ -2162,116 +2162,116 @@ estimate_ipw_inference <- function(
     dat,
     true_ATE = NA_real_
 ) {
-
+  
   # ------------------------------------------------------------
   # 1. Propensity-score model
   # ------------------------------------------------------------
-
+  
   xvars <- grep("^x\\d+$", names(dat), value = TRUE)
-
+  
   ps_formula <- as.formula(
     paste(
       "D ~",
       paste(xvars, collapse = " + ")
     )
   )
-
+  
   ps_fit <- glm(
     ps_formula,
     data = dat,
     family = binomial()
   )
-
+  
   X <- model.matrix(ps_fit)
-
+  
   phi_hat <- as.numeric(coef(ps_fit))
-
+  
   pi_hat <- pmin(
     pmax(fitted(ps_fit), 1e-8),
     1 - 1e-8
   )
-
+  
   y <- as.numeric(dat$y)
   D <- as.numeric(dat$D)
   N <- nrow(dat)
-
-
+  
+  
   # ------------------------------------------------------------
   # 2. Standard HT-style IPW means
   # ------------------------------------------------------------
-
+  
   mu1_hat <- mean(
     D * y / pi_hat
   )
-
+  
   mu0_hat <- mean(
     (1 - D) * y / (1 - pi_hat)
   )
-
+  
   ate_hat <- mu1_hat - mu0_hat
-
-
+  
+  
   # ------------------------------------------------------------
   # 3. Joint parameter
   # theta = (phi, mu1, mu0)
   # ------------------------------------------------------------
-
+  
   theta_hat <- c(
     phi_hat,
     mu1_hat,
     mu0_hat
   )
-
+  
   r <- ncol(X)
-
-
+  
+  
   # ------------------------------------------------------------
   # 4. Observation-level estimating equations
   # ------------------------------------------------------------
-
+  
   psi_fun <- function(theta) {
-
+    
     phi <- theta[seq_len(r)]
-
+    
     mu1 <- theta[r + 1]
     mu0 <- theta[r + 2]
-
+    
     pi <- plogis(
       as.vector(X %*% phi)
     )
-
+    
     pi <- pmin(
       pmax(pi, 1e-8),
       1 - 1e-8
     )
-
+    
     # propensity-score score
     Psi_phi <-
       X * as.numeric(D - pi)
-
+    
     # HT IPW mean equations
     Psi_mu1 <-
       D * y / pi - mu1
-
+    
     Psi_mu0 <-
       (1 - D) * y / (1 - pi) - mu0
-
+    
     cbind(
       Psi_phi,
       mu1 = Psi_mu1,
       mu0 = Psi_mu0
     )
   }
-
-
+  
+  
   # ------------------------------------------------------------
   # 5. Sandwich variance
   # ------------------------------------------------------------
-
+  
   Psi_hat <- psi_fun(theta_hat)
-
+  
   B <- crossprod(Psi_hat) / N
-
+  
   J <- numDeriv::jacobian(
     func = function(theta) {
       colMeans(
@@ -2280,17 +2280,17 @@ estimate_ipw_inference <- function(
     },
     x = theta_hat
   )
-
+  
   A <- -J
-
+  
   A_inv <- tryCatch(
     solve(A),
     error = function(e) NULL
   )
-
+  
   if (is.null(A_inv) ||
       any(!is.finite(A_inv))) {
-
+    
     return(
       list(
         ATE = ate_hat,
@@ -2304,32 +2304,32 @@ estimate_ipw_inference <- function(
       )
     )
   }
-
+  
   V <- (
     A_inv %*%
       B %*%
       t(A_inv)
   ) / N
-
-
+  
+  
   # ------------------------------------------------------------
   # 6. ATE = mu1 - mu0
   # ------------------------------------------------------------
-
+  
   contrast <- rep(
     0,
     length(theta_hat)
   )
-
+  
   contrast[r + 1] <- 1
   contrast[r + 2] <- -1
-
+  
   var_ate <- as.numeric(
     t(contrast) %*%
       V %*%
       contrast
   )
-
+  
   se_ate <- if (
     is.finite(var_ate) &&
     var_ate >= 0
@@ -2338,71 +2338,71 @@ estimate_ipw_inference <- function(
   } else {
     NA_real_
   }
-
-
+  
+  
   # ------------------------------------------------------------
   # 7. Coverage
   # ------------------------------------------------------------
-
+  
   coverage <- if (
     is.finite(true_ATE) &&
     is.finite(se_ate)
   ) {
-
+    
     lower <-
       ate_hat -
       qnorm(0.975) * se_ate
-
+    
     upper <-
       ate_hat +
       qnorm(0.975) * se_ate
-
+    
     as.numeric(
       lower <= true_ATE &&
         true_ATE <= upper
     )
-
+    
   } else {
-
+    
     NA_real_
   }
-
-
+  
+  
   # ------------------------------------------------------------
   # 8. Weight diagnostics
   # ------------------------------------------------------------
-
+  
   w1 <- 1 / pi_hat[D == 1]
-
+  
   w0 <- 1 / (1 - pi_hat[D == 0])
-
+  
   ESS1 <-
     sum(w1)^2 /
     sum(w1^2)
-
+  
   ESS0 <-
     sum(w0)^2 /
     sum(w0^2)
-
-
+  
+  
   # ------------------------------------------------------------
   # 9. Return
   # ------------------------------------------------------------
-
+  
   list(
     ATE = ate_hat,
     SE = se_ate,
     coverage = coverage,
-
+    
     ESS1 = ESS1,
     ESS0 = ESS0,
-
+    
     max_weight1 = max(w1),
     max_weight0 = max(w0),
-
+    
     pi_hat = pi_hat,
     phi_hat = phi_hat,
-
+    
     success = is.finite(se_ate)
   )
 }
@@ -3502,7 +3502,7 @@ solve_lambda_dual <- function(
     entropy = c("SL", "EL", "ET", "HD", "CE"),
     lambda_start = NULL,
     maxit = 1000,
-
+    
     eps_domain = 1e-8) {
   
   entropy <- match.arg(entropy)
@@ -3942,14 +3942,14 @@ estimate_ipw <- function(dat) {
 estimate_cbps_pair <- function(dat) {
   xvars <- grep("^x\\d+$", names(dat), value = TRUE)
   X2 <- as.matrix(cbind(1, dat[, xvars, drop = FALSE]))
-
+  
   ocbps_model <- CBPS::CBPS(dat$D ~ X2, ATT = 0, method = "exact",
                             baseline.formula = ~ X2, diff.formula = ~ X2)
   ocbps <- coef(lm(dat$y ~ dat$D, weights = ocbps_model$weights))["dat$D"]
-
+  
   cbps_model <- CBPS::CBPS(dat$D ~ X2, ATT = 0, method = "exact")
   cbps <- coef(lm(dat$y ~ dat$D, weights = cbps_model$weights))["dat$D"]
-
+  
   c(oCBPS = unname(ocbps), CBPS = unname(cbps))
 }
 
@@ -4765,7 +4765,7 @@ run_one_replication_old <- function(
   }
   
   
-
+  
   
   # ==============================================================
   # 5. Choose calibration functions for GEC
@@ -6056,11 +6056,11 @@ run_one_replication <- function(
 # ---------------------------------
 # Repeats one chosen scenario m times and stacks the results.
 run_simulation_scenario_old <- function(n = 1000, p = 4, m = 500, K = 4,
-                                    outcome_model = 1, ps_model = 1,
-                                    run_lm = TRUE,
-                                    run_gam = TRUE,
-                                    gec_from = c("gam", "lm"),
-                                    numerical_jacobian = TRUE,progress = TRUE, oracle_m = FALSE) {
+                                        outcome_model = 1, ps_model = 1,
+                                        run_lm = TRUE,
+                                        run_gam = TRUE,
+                                        gec_from = c("gam", "lm"),
+                                        numerical_jacobian = TRUE,progress = TRUE, oracle_m = FALSE) {
   gec_from <- match.arg(gec_from)
   
   out <- vector("list", m)
@@ -6174,10 +6174,10 @@ run_simulation_scenario <- function(
 # Runs all four combinations of outcome model and propensity score model and
 # returns a named list of result tables.
 run_all_scenarios_old <- function(n , p , m , K ,
-                              run_lm = TRUE,
-                              run_gam = TRUE,
-                              gec_from = c("gam", "lm"),numerical_jacobian = TRUE,
-                              progress = TRUE, oracle_m = FALSE) {
+                                  run_lm = TRUE,
+                                  run_gam = TRUE,
+                                  gec_from = c("gam", "lm"),numerical_jacobian = TRUE,
+                                  progress = TRUE, oracle_m = FALSE) {
   gec_from <- match.arg(gec_from)
   
   scenarios <- list(
@@ -7089,7 +7089,13 @@ make_table <- function(
             )
         }
       }
+      N_success <- sum(
+        !is.na(success) & success == 1
+      )
       
+      N_failure <- N_total - N_success
+      
+      Failure_Rate <- N_failure / N_total
       
       out[[counter]] <- data.frame(
         
@@ -7097,8 +7103,10 @@ make_table <- function(
         
         Method = meth,
         
-        N_Total =
-          N_total,
+        N_Total = N_total,
+        N_Success = N_success,
+        N_Failure = N_failure,
+        Failure_Rate = Failure_Rate,
         
         N_Analytic =
           N_analytic,
@@ -7969,7 +7977,7 @@ panel_boxplot_gg <- function(data, true_ate, panel_label, ylim_range = NULL) {
     values_to = "ATE"
   )
   df_long$Method <- factor(df_long$Method, levels = colnames(data))
-
+  
   p <- ggplot(df_long, aes(x = Method, y = ATE)) +
     geom_boxplot(fill = "grey75", color = "grey40", linewidth = 0.4) +
     geom_hline(yintercept = true_ate, color = "red", linewidth = 0.4) +
@@ -7981,7 +7989,7 @@ panel_boxplot_gg <- function(data, true_ate, panel_label, ylim_range = NULL) {
       panel.grid = element_blank(),
       axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
     )
-
+  
   if (!is.null(ylim_range)) {
     p <- p + coord_cartesian(ylim = ylim_range)
   }
@@ -8154,28 +8162,28 @@ estimate_ATE_dual_score_aug <- function(
     entropy = "CE",
     maxit = 1000
 ) {
-
+  
   entropy <- match.arg(
     entropy,
     choices = c("SL", "EL", "ET", "HD", "CE")
   )
-
-
+  
+  
   ###########################################################################
   # 1. Reconstruct cross-fitted datasets
   ###########################################################################
-
+  
   dat1 <- do.call(
     rbind,
     fold_t1
   )
-
+  
   dat0 <- do.call(
     rbind,
     fold_t0
   )
-
-
+  
+  
   # Keep subjects aligned
   if ("ID" %in% names(dat1)) {
     dat1 <- dat1[
@@ -8184,7 +8192,7 @@ estimate_ATE_dual_score_aug <- function(
       drop = FALSE
     ]
   }
-
+  
   if ("ID" %in% names(dat0)) {
     dat0 <- dat0[
       order(dat0$ID),
@@ -8192,69 +8200,69 @@ estimate_ATE_dual_score_aug <- function(
       drop = FALSE
     ]
   }
-
-
+  
+  
   ###########################################################################
   # 2. Covariates used in the PS model
   ###########################################################################
-
+  
   xvars <- grep(
     "^x\\d+$",
     names(dat1),
     value = TRUE
   )
-
+  
   if (length(xvars) == 0) {
     stop("No x1, ..., xp variables found.")
   }
-
-
+  
+  
   # Logistic PS design matrix INCLUDING intercept
   X1 <- model.matrix(
     reformulate(xvars),
     data = dat1
   )
-
+  
   X0 <- model.matrix(
     reformulate(xvars),
     data = dat0
   )
-
-
+  
+  
   ###########################################################################
   # 3. Arm-specific response indicators and probabilities
   ###########################################################################
-
+  
   D1 <- as.numeric(
     dat1$D == 1
   )
-
+  
   D0 <- as.numeric(
     dat0$D == 0
   )
-
-
+  
+  
   p1 <- as.numeric(
     dat1$pi.hat
   )
-
+  
   p0 <- as.numeric(
     1 - dat0$pi.hat
   )
-
-
+  
+  
   # Numerical protection
   p1 <- pmin(
     pmax(p1, 1e-8),
     1 - 1e-8
   )
-
+  
   p0 <- pmin(
     pmax(p0, 1e-8),
     1 - 1e-8
   )
-
-
+  
+  
   ###########################################################################
   # 4. Propensity-score directions
   #
@@ -8264,23 +8272,23 @@ estimate_ATE_dual_score_aug <- function(
   # = [1/(1-p)] dp/dphi
   # = p X
   ###########################################################################
-
+  
   h1 <- X1 * p1
-
+  
   h0 <- X0 * p0
-
-
+  
+  
   colnames(h1) <- paste0(
     "h1_",
     colnames(X1)
   )
-
+  
   colnames(h0) <- paste0(
     "h0_",
     colnames(X0)
   )
-
-
+  
+  
   ###########################################################################
   # 5. A6 balancing functions
   #
@@ -8294,22 +8302,22 @@ estimate_ATE_dual_score_aug <- function(
   #
   #   yhat + propensity-score directions
   ###########################################################################
-
+  
   B1_aug <- cbind(
     yhat = dat1$y.hat,
     h1
   )
-
+  
   B0_aug <- cbind(
     yhat = dat0$y.hat,
     h0
   )
-
-
+  
+  
   ###########################################################################
   # 6. Solve calibration problem
   ###########################################################################
-
+  
   fit1 <- solve_lambda_dual(
     b_mat = B1_aug,
     pi_hat = p1,
@@ -8317,8 +8325,8 @@ estimate_ATE_dual_score_aug <- function(
     entropy = entropy,
     maxit = maxit
   )
-
-
+  
+  
   fit0 <- solve_lambda_dual(
     b_mat = B0_aug,
     pi_hat = p0,
@@ -8326,19 +8334,19 @@ estimate_ATE_dual_score_aug <- function(
     entropy = entropy,
     maxit = maxit
   )
-
-
+  
+  
   ###########################################################################
   # 7. Check for hard failure
   ###########################################################################
-
+  
   if (
     is.null(fit1$weights_all) ||
     is.null(fit0$weights_all) ||
     any(!is.finite(fit1$weights_all)) ||
     any(!is.finite(fit0$weights_all))
   ) {
-
+    
     return(
       list(
         ATE = NA_real_,
@@ -8350,54 +8358,54 @@ estimate_ATE_dual_score_aug <- function(
       )
     )
   }
-
-
+  
+  
   ###########################################################################
   # 8. Closed-form arm means and ATE
   ###########################################################################
-
+  
   N1 <- nrow(dat1)
   N0 <- nrow(dat0)
-
-
+  
+  
   theta1_hat <- sum(
     D1 *
       fit1$weights_all *
       dat1$y
   ) / N1
-
-
+  
+  
   theta0_hat <- sum(
     D0 *
       fit0$weights_all *
       dat0$y
   ) / N0
-
-
+  
+  
   ATE_hat <-
     theta1_hat -
     theta0_hat
-
-
+  
+  
   ###########################################################################
   # 9. Return
   ###########################################################################
-
+  
   list(
     ATE = ATE_hat,
-
+    
     theta1 = theta1_hat,
     theta0 = theta0_hat,
-
+    
     fit1 = fit1,
     fit0 = fit0,
-
+    
     h1 = h1,
     h0 = h0,
-
+    
     B1_aug = B1_aug,
     B0_aug = B0_aug,
-
+    
     success =
       isTRUE(fit1$converged) &&
       isTRUE(fit0$converged)
@@ -9562,4 +9570,3 @@ run_one_A6_ET <- function(
     stringsAsFactors = FALSE
   )
 }
-
